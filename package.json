@@ -1,0 +1,21 @@
+{
+  "name": "wilderlands",
+  "version": "0.1.0",
+  "description": "荒野开拓者 · Kenshi 风高自由种田沙盒（Three.js / TypeScript）",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "three": "^0.160.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.160.0",
+    "typescript": "^5.5.4",
+    "vite": "^5.4.8"
+  }
+}

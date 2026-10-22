@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>荒野开拓者 Wilderlands · Kenshi 风种田沙盒</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='24' cy='7' r='5' fill='%23c8a53a'/%3E%3Cpath d='M5 26c0-8 5-13 12-14-1 7-6 12-12 14z' fill='%237a8a4a'/%3E%3Cpath d='M12 22l-4 6 4-2 3 4 2-5-3-2z' fill='%23a8703a'/%3E%3C/svg%3E">
+<style>
+:root{
+  --panel:rgba(24,30,20,.78);
+  --panel-line:#6a7a55;
+  --ink:#e8e4d8;
+  --ink-dim:#a8b098;
+  --accent:#c8a53a;
+  --accent-2:#7a8a4a;
+  --danger:#c05050;
+  --hp:#5aa05a;
+  --hunger:#c8a53a;
+  --gold:#e0b850;
+}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;overflow:hidden;background:#23261e;color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans SC","Microsoft YaHei",system-ui,sans-serif}
+#stage{position:fixed;inset:0}
+canvas{display:block}
+.panel{background:var(--panel);border:1px solid var(--panel-line);border-radius:8px;padding:8px 10px;font-size:13px;line-height:1.5;backdrop-filter:blur(2px)}
+.panel b{color:var(--accent);font-weight:700}
+
+/* 左上：标题与操作说明 */
+#top-left{position:fixed;top:10px;left:10px;max-width:min(360px,84vw);z-index:5}
+#top-left h1{font-size:16px;letter-spacing:.08em;color:var(--accent);margin-bottom:4px;font-weight:800}
+#top-left .ops{color:var(--ink-dim);font-size:12px}
+#top-left .ops span{display:inline-block;margin-right:10px;white-space:nowrap}
+kbd{background:#3a4330;border:1px solid #5a6748;border-bottom-width:2px;border-radius:4px;padding:0 5px;font-size:11px;font-family:ui-monospace,Menlo,monospace;color:var(--ink)}
+
+/* 右上：资源栏 */
+#res{position:fixed;top:10px;right:10px;display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;z-index:5}
+.chip{background:var(--panel);border:1px solid var(--panel-line);border-radius:6px;padding:5px 10px;font-size:13px;white-space:nowrap}
+.chip i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px}
+.chip b{font-variant-numeric:tabular-nums}
+.chip .lbl{color:var(--ink-dim);margin-right:4px}
+
+/* 左下：选中角色面板 */
+#sel{position:fixed;left:10px;bottom:64px;z-index:5;width:min(300px,calc(100vw - 20px));display:none}
+#sel h3{font-size:13px;margin-bottom:6px;color:var(--accent)}
+.bar{height:12px;border-radius:6px;background:#232a1e;border:1px solid #3a4330;position:relative;margin:4px 0 10px;overflow:hidden}
+.bar>i{display:block;height:100%;border-radius:6px;transition:width .25s}
+.bar.hp>i{background:var(--hp)}
+.bar.hunger>i{background:var(--hunger)}
+.bar span{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--ink);text-shadow:0 1px 2px #000}
+#sel .limbs{font-size:11px;color:var(--ink-dim);display:flex;flex-wrap:wrap;gap:2px 10px}
+#sel .limbs b{color:var(--ink)}
+
+/* 消息日志 */
+#log{position:fixed;right:10px;bottom:64px;z-index:5;display:flex;flex-direction:column;gap:4px;align-items:flex-end}
+#log .msg{background:var(--panel);border:1px solid var(--panel-line);border-radius:6px;padding:4px 10px;font-size:12px;opacity:0;transform:translateY(4px);transition:opacity .4s,transform .4s;max-width:min(300px,60vw)}
+#log .msg.show{opacity:1;transform:none}
+
+/* 底部：模式切换 */
+#modes{position:fixed;left:50%;bottom:10px;transform:translateX(-50%);z-index:6;display:flex;gap:6px;padding:6px;border-radius:10px;background:var(--panel);border:1px solid var(--panel-line)}
+.mbtn{border:1px solid #3a4330;background:#2b3322;color:var(--ink);border-radius:6px;padding:6px 10px;font-size:12px;cursor:pointer;min-width:44px;min-height:44px;font-family:inherit}
+.mbtn.on{background:var(--accent-2);border-color:#9aaa6a;color:#0e120a;font-weight:700}
+.mbtn small{display:block;font-size:10px;color:var(--ink-dim)}
+.mbtn.on small{color:#1a2010}
+.mbtn:hover{filter:brightness(1.15)}
+
+/* 悬停提示 */
+#tip{position:fixed;z-index:9;pointer-events:none;background:var(--panel);border:1px solid var(--accent);border-radius:6px;padding:4px 10px;font-size:12px;display:none;color:var(--ink);white-space:nowrap}
+
+/* 交易面板 */
+#trade{position:fixed;inset:0;z-index:20;display:none;background:rgba(8,10,6,.6);align-items:center;justify-content:center}
+#trade .box{background:#20261a;border:1px solid var(--panel-line);border-radius:12px;padding:18px 20px;width:min(360px,92vw)}
+#trade h2{font-size:16px;color:var(--accent);margin-bottom:10px}
+#trade .row{display:flex;justify-content:space-between;align-items:center;margin:8px 0;font-size:14px}
+#trade .row .qty{color:var(--ink-dim);font-variant-numeric:tabular-nums}
+.tbtn{border:1px solid #5a6748;background:#33402a;color:var(--ink);border-radius:6px;padding:7px 14px;cursor:pointer;font-size:13px;min-height:44px}
+.tbtn:hover{filter:brightness(1.15)}
+#trade .close{margin-top:14px;width:100%;background:#3a3320;border-color:#5a5038}
+
+/* 新手提示 */
+#hint{position:fixed;left:50%;top:12px;transform:translateX(-50%);z-index:8;max-width:min(520px,92vw);text-align:center;font-size:13px}
+#hint .x{position:absolute;right:6px;top:4px;background:none;border:none;color:var(--ink-dim);font-size:14px;cursor:pointer;padding:6px}
+
+@media (max-width:600px){
+  .panel{font-size:12px}
+  #top-left .ops span{margin-right:6px}
+  #modes{flex-wrap:wrap;max-width:96vw;justify-content:center}
+  .mbtn{padding:5px 8px;font-size:11px}
+}
+</style>
+</head>
+<body>
+<div id="stage"></div>
+
+<!-- 左上：标题与操作 -->
+<div id="top-left" class="panel">
+  <h1>荒 野 开 拓 者</h1>
+  <div class="ops">
+    <span><kbd>W A S D</kbd> 移动镜头</span>
+    <span><kbd>滚轮</kbd> 缩放</span>
+    <span><kbd>Q / E</kbd> 旋转</span>
+    <span><kbd>左键</kbd> 选中角色</span>
+    <span><kbd>右键</kbd> 下达命令</span>
+    <span><kbd>F</kbd> 进食</span>
+  </div>
+</div>
+
+<!-- 右上：资源 -->
+<div id="res">
+  <div class="chip"><i style="background:var(--gold)"></i><span class="lbl">金币</span><b id="rGold">20</b></div>
+  <div class="chip"><i style="background:#8a6a3a"></i><span class="lbl">木材</span><b id="rWood">10</b></div>
+  <div class="chip"><i style="background:#7a7a72"></i><span class="lbl">石头</span><b id="rStone">5</b></div>
+  <div class="chip"><i style="background:#c8903a"></i><span class="lbl">食物</span><b id="rFood">10</b></div>
+  <div class="chip"><i style="background:#9aaa6a"></i><span class="lbl">种子</span><b id="rSeed">5</b></div>
+</div>
+
+<!-- 左下：选中角色 -->
+<div id="sel" class="panel">
+  <h3 id="selName">拓荒者</h3>
+  <div class="bar hp"><i id="hpFill" style="width:100%"></i><span id="hpTxt">100/100</span></div>
+  <div class="bar hunger"><i id="hungerFill" style="width:100%"></i><span id="hungerTxt">100</span></div>
+  <div class="limbs" id="limbs"></div>
+</div>
+
+<!-- 消息日志 -->
+<div id="log"></div>
+
+<!-- 新手提示 -->
+<div id="hint" class="panel">
+  欢迎来到荒野。左键选中一名拓荒者，<b>右键</b>点树砍柴、点岩石采矿、点金色农田收获、点商人交易、点野狼战斗。底部切换<b>播种 / 围栏 / 木屋</b>模式。
+  <button class="x" id="hintX" aria-label="关闭提示">×</button>
+</div>
+
+<!-- 底部模式 -->
+<div id="modes">
+  <button class="mbtn on" data-m="0">探索<small>1</small></button>
+  <button class="mbtn" data-m="1">播种<small>2</small></button>
+  <button class="mbtn" data-m="2">围栏<small>3</small></button>
+  <button class="mbtn" data-m="3">木屋<small>4</small></button>
+</div>
+
+<!-- 交易面板 -->
+<div id="trade">
+  <div class="box">
+    <h2>游商 · 贸易站</h2>
+    <div class="row"><span>出售食物</span><span class="qty" id="trCrop">食物 ×0 · 3 金/个</span><button class="tbtn" id="trSell">出售</button></div>
+    <div class="row"><span>购买种子</span><span class="qty" id="trSeed">种子 ×0 · 2 金/个</span><button class="tbtn" id="trBuy">购买</button></div>
+    <div class="row"><span>持有金币</span><span class="qty" id="trGold">0</span><span></span></div>
+    <button class="tbtn close" id="trClose">离开贸易站</button>
+  </div>
+</div>
+
+<script type="module" src="/src/main.ts"></script>
+</body>
+</html>
