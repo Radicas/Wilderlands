@@ -1,0 +1,8 @@
+{
+  "integration": "generic",
+  "commands_dir": ".specify/commands",
+  "script_type": "sh",
+  "feature_numbering": "sequential",
+  "project_name": "Wilderlands",
+  "initialized_at": "2026-10-22"
+}

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>荒野开拓者 Wilderlands · Kenshi 风种田沙盒</title>
+<title>荒野开拓者 Wilderlands · 高自由种田生存沙盒</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='24' cy='7' r='5' fill='%23c8a53a'/%3E%3Cpath d='M5 26c0-8 5-13 12-14-1 7-6 12-12 14z' fill='%237a8a4a'/%3E%3Cpath d='M12 22l-4 6 4-2 3 4 2-5-3-2z' fill='%23a8703a'/%3E%3C/svg%3E">
 <style>
 :root{
@@ -30,6 +30,7 @@ canvas{display:block}
 #top-left h1{font-size:16px;letter-spacing:.08em;color:var(--accent);margin-bottom:4px;font-weight:800}
 #top-left .ops{color:var(--ink-dim);font-size:12px}
 #top-left .ops span{display:inline-block;margin-right:10px;white-space:nowrap}
+#top-left{position:relative}
 kbd{background:#3a4330;border:1px solid #5a6748;border-bottom-width:2px;border-radius:4px;padding:0 5px;font-size:11px;font-family:ui-monospace,Menlo,monospace;color:var(--ink)}
 
 /* 右上：资源栏 */
@@ -49,6 +50,34 @@ kbd{background:#3a4330;border:1px solid #5a6748;border-bottom-width:2px;border-r
 .bar span{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--ink);text-shadow:0 1px 2px #000}
 #sel .limbs{font-size:11px;color:var(--ink-dim);display:flex;flex-wrap:wrap;gap:2px 10px}
 #sel .limbs b{color:var(--ink)}
+#sel .skills{font-size:11px;color:var(--ink);margin-top:2px}
+#sel .mood{font-size:11px;color:var(--accent-2);margin-top:2px;font-style:italic}
+
+/* 背包区 */
+.invHead{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--accent);margin:10px 0 2px}
+.invHead b{font-variant-numeric:tabular-nums}
+.bar.load{height:7px;margin:2px 0 6px}
+.bar.load>i{background:#7a8a4a}
+.invRow{display:flex;justify-content:space-between;align-items:center;font-size:12px;padding:3px 0;border-bottom:1px dashed #3a4330;position:relative}
+.invRow:last-child{border-bottom:none}
+.invRow .invName{color:var(--ink)}
+.invRow .invName b{color:var(--ink);font-variant-numeric:tabular-nums}
+.invRow .invDesc{display:none;position:absolute;left:0;right:0;bottom:calc(100% + 4px);background:#151a10;border:1px solid #5a6748;border-radius:6px;padding:6px 8px;font-size:11px;color:var(--ink-dim);line-height:1.5;z-index:8;pointer-events:none}
+.invRow:hover .invDesc{display:block}
+.invTr{border:1px solid #5a6748;background:#33402a;color:var(--ink);border-radius:5px;width:28px;height:28px;cursor:pointer;font-size:13px;line-height:1}
+.invTr:hover{filter:brightness(1.2)}
+
+/* 转移浮层 */
+#invPicker{position:fixed;inset:0;z-index:15;background:rgba(8,10,6,.55);display:none;align-items:center;justify-content:center}
+#invPicker .pkBox{background:#20261a;border:1px solid var(--panel-line);border-radius:12px;padding:14px 16px;width:min(280px,88vw);display:flex;flex-direction:column;gap:6px}
+#invPicker .pkTitle{font-size:13px;color:var(--accent);margin-bottom:4px}
+.pkQty{display:flex;align-items:center;gap:6px;margin-bottom:2px}
+.pkQtyBtn{min-height:32px;padding:4px 10px;flex:0 0 auto}
+.pkQtyNum{flex:1;text-align:center;font-size:15px;color:var(--ink);font-variant-numeric:tabular-nums}
+.pkBtn{border:1px solid #5a6748;background:#33402a;color:var(--ink);border-radius:6px;padding:8px 10px;cursor:pointer;font-size:13px;min-height:40px}
+.pkBtn:hover{filter:brightness(1.15)}
+.pkBtn.pkDiscard{border-color:#7a4a4a;background:#3a2828}
+.pkBtn.pkCancel{background:#2b3322}
 
 /* 消息日志 */
 #log{position:fixed;right:10px;bottom:64px;z-index:5;display:flex;flex-direction:column;gap:4px;align-items:flex-end}
@@ -69,12 +98,40 @@ kbd{background:#3a4330;border:1px solid #5a6748;border-bottom-width:2px;border-r
 /* 交易面板 */
 #trade{position:fixed;inset:0;z-index:20;display:none;background:rgba(8,10,6,.6);align-items:center;justify-content:center}
 #trade .box{background:#20261a;border:1px solid var(--panel-line);border-radius:12px;padding:18px 20px;width:min(360px,92vw)}
+#shipPanel{position:fixed;inset:0;z-index:20;display:none;background:rgba(8,10,6,.6);align-items:center;justify-content:center}
+#shipPanel .tbox{background:#20261a;border:1px solid var(--panel-line);border-radius:12px;padding:18px 20px;width:min(380px,92vw)}
+#shipPanel h3{margin:0 0 6px;font-size:15px}
+#shipPanel .shipDesc{font-size:12px;color:var(--ink-dim);line-height:1.6;margin:0 0 10px}
+#shipPanel .shipRow{display:flex;justify-content:space-between;align-items:center;gap:10px;margin:8px 0}
+#shipPanel .shipStatus{font-size:12px;color:var(--ink-dim);margin:10px 0 4px}
+#victory{position:fixed;inset:0;z-index:40;display:none;align-items:center;justify-content:center;background:rgba(8,10,6,.78)}
+#victory .vBox{background:#20261a;border:2px solid var(--gold);border-radius:14px;padding:26px 30px;width:min(440px,92vw);text-align:center;animation:vPop .5s ease}
+#victory h2{margin:0 0 12px;color:var(--gold)}
+#victory p{font-size:13px;line-height:1.8;color:var(--ink)}
+#victory .vSub{font-size:12px;color:var(--ink-dim);margin-top:12px}
+@keyframes vPop{from{transform:scale(.8);opacity:0}to{transform:scale(1);opacity:1}}
 #trade h2{font-size:16px;color:var(--accent);margin-bottom:10px}
 #trade .row{display:flex;justify-content:space-between;align-items:center;margin:8px 0;font-size:14px}
 #trade .row .qty{color:var(--ink-dim);font-variant-numeric:tabular-nums}
 .tbtn{border:1px solid #5a6748;background:#33402a;color:var(--ink);border-radius:6px;padding:7px 14px;cursor:pointer;font-size:13px;min-height:44px}
 .tbtn:hover{filter:brightness(1.15)}
 #trade .close{margin-top:14px;width:100%;background:#3a3320;border-color:#5a5038}
+
+/* 存档菜单 */
+#saveBtn{position:absolute;top:8px;right:8px;z-index:6;border:1px solid #5a6748;background:#2b3322;color:var(--ink);border-radius:6px;padding:3px 10px;cursor:pointer;font-size:12px;min-height:26px}
+#saveBtn:hover{filter:brightness(1.15)}
+#saveModal{position:fixed;inset:0;z-index:25;display:none;background:rgba(8,10,6,.6);align-items:center;justify-content:center}
+#saveModal .box{background:#20261a;border:1px solid var(--panel-line);border-radius:12px;padding:18px 20px;width:min(380px,94vw)}
+#saveModal h2{font-size:16px;color:var(--accent);margin-bottom:10px}
+.slotRow{display:flex;align-items:center;gap:8px;margin:7px 0;font-size:13px}
+.slotRow .slotName{width:70px;color:var(--ink)}
+.slotRow .slotStamp{flex:1;color:var(--ink-dim);font-size:11px}
+.sbtn{border:1px solid #5a6748;background:#33402a;color:var(--ink);border-radius:5px;padding:4px 10px;cursor:pointer;font-size:12px;min-height:30px}
+.sbtn:hover{filter:brightness(1.15)}
+.sbtn[data-act="load"]{background:#3a3320;border-color:#5a5038}
+.saveFoot{display:flex;gap:8px;margin-top:12px}
+.saveFoot .sbtn{flex:1;padding:8px 6px}
+#saveClose{width:100%;margin-top:8px;background:#3a3320;border-color:#5a5038}
 
 /* 新手提示 */
 #hint{position:fixed;left:50%;top:12px;transform:translateX(-50%);z-index:8;max-width:min(520px,92vw);text-align:center;font-size:13px}
@@ -93,6 +150,7 @@ kbd{background:#3a4330;border:1px solid #5a6748;border-bottom-width:2px;border-r
 
 <!-- 左上：标题与操作 -->
 <div id="top-left" class="panel">
+  <button id="saveBtn">存档</button>
   <h1>荒 野 开 拓 者</h1>
   <div class="ops">
     <span><kbd>W A S D</kbd> 移动镜头</span>
@@ -106,11 +164,13 @@ kbd{background:#3a4330;border:1px solid #5a6748;border-bottom-width:2px;border-r
 
 <!-- 右上：资源 -->
 <div id="res">
+  <div class="chip"><span class="lbl">时辰</span><b id="rTime">清晨</b></div>
   <div class="chip"><i style="background:var(--gold)"></i><span class="lbl">金币</span><b id="rGold">20</b></div>
-  <div class="chip"><i style="background:#8a6a3a"></i><span class="lbl">木材</span><b id="rWood">10</b></div>
-  <div class="chip"><i style="background:#7a7a72"></i><span class="lbl">石头</span><b id="rStone">5</b></div>
-  <div class="chip"><i style="background:#c8903a"></i><span class="lbl">食物</span><b id="rFood">10</b></div>
-  <div class="chip"><i style="background:#9aaa6a"></i><span class="lbl">种子</span><b id="rSeed">5</b></div>
+  <div class="chip"><i style="background:#8a6a3a"></i><span class="lbl">木材</span><b id="rWood">9</b></div>
+  <div class="chip"><i style="background:#7a7a72"></i><span class="lbl">石头</span><b id="rStone">6</b></div>
+  <div class="chip"><i style="background:#c8903a"></i><span class="lbl">食物</span><b id="rFood">9</b></div>
+  <div class="chip"><i style="background:#9aaa6a"></i><span class="lbl">种子</span><b id="rSeed">3</b></div>
+  <div class="chip"><i style="background:#b06a5a"></i><span class="lbl">浆果</span><b id="rBerry">0</b></div>
 </div>
 
 <!-- 左下：选中角色 -->
@@ -119,6 +179,11 @@ kbd{background:#3a4330;border:1px solid #5a6748;border-bottom-width:2px;border-r
   <div class="bar hp"><i id="hpFill" style="width:100%"></i><span id="hpTxt">100/100</span></div>
   <div class="bar hunger"><i id="hungerFill" style="width:100%"></i><span id="hungerTxt">100</span></div>
   <div class="limbs" id="limbs"></div>
+  <div class="skills" id="skills">采集 Lv0　战斗 Lv0　种田 Lv0</div>
+  <div class="mood" id="curAction">空闲</div>
+  <div class="invHead">背包 <b id="invLoad">0/40</b></div>
+  <div class="bar load"><i id="loadFill" style="width:0%"></i></div>
+  <div id="invList"></div>
 </div>
 
 <!-- 消息日志 -->
@@ -126,26 +191,63 @@ kbd{background:#3a4330;border:1px solid #5a6748;border-bottom-width:2px;border-r
 
 <!-- 新手提示 -->
 <div id="hint" class="panel">
-  欢迎来到荒野。左键选中一名拓荒者，<b>右键</b>点树砍柴、点岩石采矿、点金色农田收获、点商人交易、点野狼战斗。底部切换<b>播种 / 围栏 / 木屋</b>模式。
+  欢迎来到荒野。左键选中一名拓荒者，<b>右键</b>点树砍柴、点岩石采矿、点<b>浆果丛</b>采食、点商人交易、点野狼战斗；点空地则走过去。金币攒够后，可右键<b>流浪者</b>招募入队、在贸易站买<b>木矛</b>提升战力。夜晚野狼更凶，注意看右上角时辰。
   <button class="x" id="hintX" aria-label="关闭提示">×</button>
 </div>
 
-<!-- 底部模式 -->
-<div id="modes">
-  <button class="mbtn on" data-m="0">探索<small>1</small></button>
-  <button class="mbtn" data-m="1">播种<small>2</small></button>
-  <button class="mbtn" data-m="2">围栏<small>3</small></button>
-  <button class="mbtn" data-m="3">木屋<small>4</small></button>
-</div>
 
 <!-- 交易面板 -->
 <div id="trade">
   <div class="box">
-    <h2>游商 · 贸易站</h2>
+    <h2>游商 · 贸易站 <span id="trWho" style="font-size:0.8em;color:#8a9a5a;"></span></h2>
     <div class="row"><span>出售食物</span><span class="qty" id="trCrop">食物 ×0 · 3 金/个</span><button class="tbtn" id="trSell">出售</button></div>
+    <div class="row"><span>出售木材</span><span class="qty" id="trWood">木材 ×0 · 1 金/个</span><button class="tbtn" id="trSellWood">出售</button></div>
+    <div class="row"><span>出售石头</span><span class="qty" id="trStone">石头 ×0 · 1 金/个</span><button class="tbtn" id="trSellStone">出售</button></div>
     <div class="row"><span>购买种子</span><span class="qty" id="trSeed">种子 ×0 · 2 金/个</span><button class="tbtn" id="trBuy">购买</button></div>
+    <div class="row"><span>购买木矛</span><span class="qty" id="trSpear">木矛 · 8 金 · 攻击 +3</span><button class="tbtn" id="trBuySpear">装备</button></div>
     <div class="row"><span>持有金币</span><span class="qty" id="trGold">0</span><span></span></div>
     <button class="tbtn close" id="trClose">离开贸易站</button>
+  </div>
+</div>
+
+<!-- 背包转移浮层 -->
+<div id="invPicker">
+  <div class="pkBox" id="invPickerList"></div>
+</div>
+
+<!-- 修船面板（S4 主线） -->
+<div id="shipPanel" class="panel">
+  <div class="tbox">
+    <h3>搁浅的破船</h3>
+    <p class="shipDesc">一艘倒扣在荒野里的破船。没人见过海，可它就是搁浅在这儿了——<br>传说掌舵的是一头野狼。</p>
+    <div class="shipRow"><span id="shipWood">木材 0/30</span><button class="tbtn" id="shipWoodBtn">投入木材 ×10</button></div>
+    <div class="shipRow"><span id="shipStone">石头 0/20</span><button class="tbtn" id="shipStoneBtn">投入石头 ×5</button></div>
+    <p class="shipStatus" id="shipStatus">还差一点材料。</p>
+    <button class="tbtn close" id="shipClose">离开</button>
+  </div>
+</div>
+
+<!-- 通关横幅（S4） -->
+<div id="victory">
+  <div class="vBox">
+    <h2>主线达成 · 船修好了</h2>
+    <p>咣当！破船翻正——<b>一头穿水手服的野狼</b>从船底钻了出来：<br>「嗷——我是船长。船是倒着造的，但能开。」</p>
+    <p class="vSub">荒野仍在。自由模式已开启：继续开拓，或乘着倒船去往下一个也许存在的海。</p>
+  </div>
+</div>
+
+<!-- 存档菜单 -->
+<button id="saveBtn">存档</button>
+<div id="saveModal">
+  <div class="box">
+    <h2>存档与读档</h2>
+    <div id="slotList"></div>
+    <div class="saveFoot">
+      <button class="sbtn" id="saveExport">导出 JSON</button>
+      <button class="sbtn" id="saveImport">导入 JSON</button>
+      <input type="file" id="saveImportFile" accept=".json,application/json" style="display:none">
+    </div>
+    <button class="sbtn" id="saveClose">关闭</button>
   </div>
 </div>
 

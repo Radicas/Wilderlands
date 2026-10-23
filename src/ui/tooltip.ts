@@ -2,6 +2,7 @@
  * Wilderlands · 悬停提示
  * 鼠标指到实体时显示"这是什么、能干嘛"。
  */
+import { CFG } from '../config';
 import { interMeshes, selectableMeshes } from '../state';
 import { camera } from '../core/renderer';
 import { raycaster, toNDC, rayGround } from '../systems/commands';
@@ -31,12 +32,19 @@ export function updateHover(x: number, y: number): void {
     if (hits.length) {
       const ent = hits[0].object.userData.ent as {
         kind: string;
-        ent?: { alive?: boolean; dead?: boolean };
+        ent?: { alive?: boolean; dead?: boolean; available?: boolean };
       };
       if (ent.kind === 'tree') txt = ent.ent?.alive ? '松树 · 右键砍伐得木材' : '树桩 · 待重生';
       else if (ent.kind === 'rock') txt = ent.ent?.alive ? '岩石 · 右键开采得石头' : '矿脉 · 待重生';
+      else if (ent.kind === 'berry') txt = ent.ent?.alive ? '浆果丛 · 右键采集得食物' : '浆果丛 · 采空了';
       else if (ent.kind === 'wolf') txt = ent.ent?.dead ? '' : '野狼 · 危险！右键攻击';
-      else if (ent.kind === 'merchant') txt = '贸易站 · 出售食物 / 购买种子';
+      else if (ent.kind === 'wanderer')
+        txt = ent.ent?.available
+          ? '流浪者 · 右键花费 ' + CFG.recruitCost + ' 金招募入队'
+          : '流浪者 · 已加入（等新人来）';
+      else if (ent.kind === 'merchant') txt = '贸易站 · 出售食物 / 购买种子与木矛';
+      else if (ent.kind === 'ship') txt = '搁浅的破船 · 主线目标（右键修船）';
+      else if (ent.kind === 'captain') txt = '船长 · 一头穿水手服的野狼（右键聊聊）';
       else if (ent.kind === 'fence') txt = '围栏 · 据点边界';
       else if (ent.kind === 'house') txt = '木屋 · 附近休息回血';
     } else {

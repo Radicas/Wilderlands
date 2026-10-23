@@ -4,21 +4,28 @@
  */
 import * as THREE from 'three';
 import { CFG, PALETTE } from '../config';
-import type { Building } from '../types';
-import { bag, buildings, logMsg } from '../state';
+import type { Unit } from '../types';
+import { buildings, logMsg } from '../state';
+import { invRemove } from './inventory';
 import { scene } from '../core/renderer';
-import { regInter } from '../core/world';
+import { regInter, groundHeightAt } from '../core/world';
 
 export function nearBuilding(p: THREE.Vector3): boolean {
   return buildings.some((b) => b.mesh.position.distanceTo(p) < 1.6);
 }
 
-export function buildFence(p: THREE.Vector3): boolean {
-  if (bag.wood < CFG.fenceCost) {
+export function buildFence(p: THREE.Vector3, from: Unit): boolean {
+  if (!invRemove(from, 'wood', CFG.fenceCost)) {
     logMsg('木材不足（围栏需 2）');
     return false;
   }
-  bag.wood -= CFG.fenceCost;
+  placeFenceAt(p);
+  logMsg('建造围栏，木材 -' + CFG.fenceCost);
+  return true;
+}
+
+/** 纯放置围栏（读档恢复用，不扣资源） */
+export function placeFenceAt(p: THREE.Vector3): void {
   const g = new THREE.Group();
   const mat = new THREE.MeshLambertMaterial({ color: PALETTE.fence });
   const p1 = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.08, 1.1, 6), mat);
@@ -28,25 +35,33 @@ export function buildFence(p: THREE.Vector3): boolean {
   const rail = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.12, 0.1), mat);
   rail.position.y = 0.85;
   g.add(p1, p2, rail);
-  g.position.set(p.x, 0, p.z);
+  g.position.set(p.x, groundHeightAt(p.x, p.z), p.z);
   g.traverse((o) => {
     if ((o as THREE.Mesh).isMesh) o.castShadow = true;
   });
   scene.add(g);
   regInter(g, { kind: 'fence' });
-  const building: Building = { type: 'fence', mesh: g };
-  buildings.push(building);
-  logMsg('建造围栏，木材 -' + CFG.fenceCost);
-  return true;
+  buildings.push({ type: 'fence', mesh: g });
 }
 
-export function buildHouse(p: THREE.Vector3): boolean {
-  if (bag.wood < CFG.houseCostWood || bag.stone < CFG.houseCostStone) {
+export function buildHouse(p: THREE.Vector3, from: Unit): boolean {
+  if (!invRemove(from, 'wood', CFG.houseCostWood)) {
     logMsg('木屋需要木材 10 + 石头 5');
     return false;
   }
-  bag.wood -= CFG.houseCostWood;
-  bag.stone -= CFG.houseCostStone;
+  if (!invRemove(from, 'stone', CFG.houseCostStone)) {
+    // 回滚已扣的木材
+    from.inv.wood = (from.inv.wood ?? 0) + CFG.houseCostWood;
+    logMsg('木屋需要木材 10 + 石头 5');
+    return false;
+  }
+  placeHouseAt(p);
+  logMsg('木屋建成，附近拓荒者缓慢回血');
+  return true;
+}
+
+/** 纯放置木屋（读档恢复用，不扣资源） */
+export function placeHouseAt(p: THREE.Vector3): void {
   const g = new THREE.Group();
   const wallMat = new THREE.MeshLambertMaterial({ color: PALETTE.houseWall });
   const roofMat = new THREE.MeshLambertMaterial({ color: PALETTE.houseRoof });
@@ -56,14 +71,11 @@ export function buildHouse(p: THREE.Vector3): boolean {
   roof.position.y = 2.05;
   roof.rotation.y = Math.PI / 4;
   g.add(wall, roof);
-  g.position.set(p.x, 0, p.z);
+  g.position.set(p.x, groundHeightAt(p.x, p.z), p.z);
   g.traverse((o) => {
     if ((o as THREE.Mesh).isMesh) o.castShadow = true;
   });
   scene.add(g);
   regInter(g, { kind: 'house' });
-  const building: Building = { type: 'house', mesh: g };
-  buildings.push(building);
-  logMsg('木屋建成，附近拓荒者缓慢回血');
-  return true;
+  buildings.push({ type: 'house', mesh: g });
 }

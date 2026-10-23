@@ -7,7 +7,7 @@ import { PALETTE } from '../config';
 
 export const scene = new THREE.Scene();
 scene.background = new THREE.Color(PALETTE.background);
-scene.fog = new THREE.Fog(PALETTE.fog, 55, 110);
+scene.fog = new THREE.Fog(PALETTE.fog, 110, 220);
 
 export const camera = new THREE.PerspectiveCamera(
   50,
@@ -28,19 +28,20 @@ const stage = document.getElementById('stage');
 if (stage) stage.appendChild(renderer.domElement);
 
 // 主光：暖色夕阳
-const sun = new THREE.DirectionalLight(0xffe8c0, 1.6);
+export const sun = new THREE.DirectionalLight(0xffe8c0, 1.6);
 sun.position.set(18, 26, 12);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
-sun.shadow.camera.left = -28;
-sun.shadow.camera.right = 28;
-sun.shadow.camera.top = 28;
-sun.shadow.camera.bottom = -28;
-sun.shadow.camera.far = 60;
+sun.shadow.camera.left = -72;
+sun.shadow.camera.right = 72;
+sun.shadow.camera.top = 72;
+sun.shadow.camera.bottom = -72;
+sun.shadow.camera.far = 140;
 scene.add(sun);
 
 // 天空补光
-scene.add(new THREE.HemisphereLight(0xc8d8e8, 0x4a4034, 0.95));
+export const hemi = new THREE.HemisphereLight(0xc8d8e8, 0x4a4034, 0.95);
+scene.add(hemi);
 
 export interface CamState {
   theta: number;

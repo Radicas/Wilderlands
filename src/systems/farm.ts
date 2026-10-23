@@ -3,24 +3,27 @@
  * 播种 → 生长（家园快 / 野外慢）→ 成熟收获。
  */
 import { CFG } from '../config';
-import type { Tile } from '../types';
-import { bag, logMsg, tiles } from '../state';
+import type { Tile, Unit } from '../types';
+import { logMsg, tiles } from '../state';
+import { invRemove } from './inventory';
+import { gainSkill } from './skills';
 import { tileMats } from '../core/world';
 
-export function plantTile(tile: Tile): boolean {
+export function plantTile(tile: Tile, from: Unit): boolean {
   if (tile.state !== 0) {
     logMsg('这块地已有作物或正在生长');
     return false;
   }
-  if (bag.seed < 1) {
+  if (!invRemove(from, 'seed', 1)) {
     logMsg('种子不足，去贸易站买一些吧');
     return false;
   }
-  bag.seed -= 1;
   tile.state = 1;
   tile.grow = 0;
+  tile.mesh.visible = true;
   tile.mesh.material = tileMats[1];
-  logMsg('播种完成，等待生长');
+  gainSkill(from, 'farm', 1);
+  logMsg(from.name + ' 播种完成，等待生长');
   return true;
 }
 
