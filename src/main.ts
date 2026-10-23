@@ -8,7 +8,7 @@ import { renderer, scene, camera, updateCamera, resize, updateCameraMove, cam } 
 import { buildBerries, buildGround, buildMerchant, buildRocks, buildTrees, buildWanderer } from './core/world';
 import { buildShip, updateShip } from './entities/ship';
 import { createPlayers, PioneerUnit } from './entities/unit';
-import { berries, buildings, clearSavePending, getSavePending, gold, logMsg, merchantPos, players, rocks, selected, tiles, timeOfDay, trees, wanderer, wolves } from './state';
+import { berries, buildings, clearSavePending, getSavePending, gold, logMsg, merchantPos, players, rocks, selected, selectableMeshes, setSavePending, tiles, timeOfDay, trees, wanderer, wolves } from './state';
 import { invTotal } from './systems/inventory';
 import { skillOf } from './systems/skills';
 import { buyPrice, soldToday } from './systems/trade';
@@ -22,6 +22,7 @@ import { initTrade, openTrade } from './ui/trade';
 import { initShipUI } from './ui/ship';
 import { initSaveUI } from './ui/save';
 import { applySave, initAutoSave, readSlot } from './systems/save';
+import { updateGameOver, isGameOver, setGameOverCallback, resetGameOver } from './systems/gameover';
 
 // ===== 初始化世界 =====
 buildGround();
@@ -49,6 +50,17 @@ if (pendingSlot) {
 } else {
   createPlayers();
   for (let i = 0; i < 3; i++) spawnWolf();
+  // 开场：商摊老头四句话（spec 013）
+  const introLines = [
+    '商摊老头：哟，又来了三个不要命的。',
+    '商摊老头：看到那边那艘破船没？把它修好，你们就能离开这鬼地方。',
+    '商摊老头：不过先活过今晚——天一黑，林子里的狼就出来了。',
+    '商摊老头：白天砍树采石头，晚上回我这摊边上待着。饿了就摘浆果，别硬扛。',
+    '（右键点树/石头采集，点空地移动）',
+  ];
+  introLines.forEach((line, i) => {
+    setTimeout(() => logMsg(line), i * 2000);
+  });
 }
 
 // 破船在存档恢复后构建（读档时按已恢复的 ship.done 决定倒扣/翻正）
@@ -76,6 +88,33 @@ players.forEach((u) => {
   if (u instanceof PioneerUnit) u.setTradeCallback((me) => openTrade(me));
 });
 
+// ===== Game Over UI（spec 012）=====
+const goOverlay = document.getElementById('gameOver') as HTMLElement;
+const goLoadBtn = document.getElementById('goLoad') as HTMLButtonElement;
+const goRestartBtn = document.getElementById('goRestart') as HTMLButtonElement;
+
+setGameOverCallback(() => {
+  goOverlay.style.display = 'flex';
+  // 读档按钮：有 auto 存档才可用
+  const hasAuto = !!readSlot('auto');
+  goLoadBtn.disabled = !hasAuto;
+});
+
+goLoadBtn.addEventListener('click', () => {
+  setSavePending('auto');
+  location.reload();
+});
+
+goRestartBtn.addEventListener('click', () => {
+  // 清空所有存档，重新开局
+  for (let i = localStorage.length - 1; i >= 0; i--) {
+    const k = localStorage.key(i);
+    if (k && k.startsWith('wilderlands.save.')) localStorage.removeItem(k);
+  }
+  resetGameOver();
+  location.reload();
+});
+
 // ===== 主循环 =====
 const clock = new THREE.Clock();
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -84,22 +123,27 @@ function loop(): void {
   requestAnimationFrame(loop);
   const dt = Math.min(clock.getDelta(), 0.05);
 
-  updateCameraMove(keys, dt);
-  updateDayNight(dt);
-  updateShip(dt);
-  updateFarms(dt);
-  updateWolves(dt);
-  updateWorld(dt);
-  players.forEach((u) => u.update(dt));
-  wolves.forEach((w) => w.update(dt));
+  // Game Over 检测（spec 012）
+  updateGameOver(dt);
 
-  if (!reducedMotion) {
-    players.forEach((u, i) => {
-      if (u instanceof PioneerUnit) u.markerTick(dt);
-      if (!u.task && !u.down) {
-        u.mesh.position.y = Math.abs(Math.sin(clock.elapsedTime + i)) * 0.03;
-      }
-    });
+  if (!isGameOver()) {
+    updateCameraMove(keys, dt);
+    updateDayNight(dt);
+    updateShip(dt);
+    updateFarms(dt);
+    updateWolves(dt);
+    updateWorld(dt);
+    players.forEach((u) => u.update(dt));
+    wolves.forEach((w) => w.update(dt));
+
+    if (!reducedMotion) {
+      players.forEach((u, i) => {
+        if (u instanceof PioneerUnit) u.markerTick(dt);
+        if (!u.task && !u.down) {
+          u.mesh.position.y = Math.abs(Math.sin(clock.elapsedTime + i)) * 0.03;
+        }
+      });
+    }
   }
 
   updateCamera();
