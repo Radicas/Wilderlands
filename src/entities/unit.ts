@@ -380,8 +380,8 @@ export class PioneerUnit implements Unit {
 
     // 姿态混合：走路时四肢摆动幅度渐入，静止时平滑收回自然站立——站走切换无跳变
     const legTarget = this._animState === 'walk' ? 1 : 0;
-    if (this._blend < legTarget) this._blend = Math.min(legTarget, this._blend + dt * ANIM.blendSpeed);
-    else if (this._blend > legTarget) this._blend = Math.max(legTarget, this._blend - dt * ANIM.blendSpeed);
+    if (this._blend < legTarget) this._blend = Math.min(this._blend + dt * ANIM.blendSpeed, legTarget);
+    else if (this._blend > legTarget) this._blend = Math.max(this._blend - dt * ANIM.blendSpeed, legTarget);
 
     // 相位推进：走路/采集/攻击时驱动，idle 停住（配合 blend 收腿回自然站姿）
     if (this._animState !== 'idle') {
@@ -615,7 +615,7 @@ export class PioneerUnit implements Unit {
     if (this.role !== 'player' || this.task || this.down || this.dead) return;
     // 找最近的狼
     let nearest: Unit | null = null;
-    let nd = CFG.wolfAutoEngageDist;
+    let nd: number = CFG.wolfAutoEngageDist;
     for (const w of wolves) {
       if (w.dead || w.down) continue;
       const d = Math.hypot(w.pos.x - this.pos.x, w.pos.z - this.pos.z);
