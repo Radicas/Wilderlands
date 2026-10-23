@@ -110,6 +110,16 @@ kbd{background:#3a4330;border:1px solid #5a6748;border-bottom-width:2px;border-r
 #victory p{font-size:13px;line-height:1.8;color:var(--ink)}
 #victory .vSub{font-size:12px;color:var(--ink-dim);margin-top:12px}
 @keyframes vPop{from{transform:scale(.8);opacity:0}to{transform:scale(1);opacity:1}}
+
+/* Game Over（spec 012） */
+#gameOver{position:fixed;inset:0;z-index:45;display:none;align-items:center;justify-content:center;background:rgba(8,6,6,.82)}
+#gameOver .gBox{background:#1a1414;border:2px solid #7a3a3a;border-radius:14px;padding:30px 34px;width:min(420px,92vw);text-align:center;animation:vPop .5s ease}
+#gameOver h2{margin:0 0 14px;color:#c96a6a;font-size:22px}
+#gameOver p{font-size:13px;line-height:1.8;color:#b0a0a0}
+#gameOver .gBtns{display:flex;gap:10px;margin-top:20px}
+#gameOver .gBtns button{flex:1;padding:10px 8px;border-radius:6px;border:1px solid #5a4040;background:#3a2a2a;color:#d0c0c0;cursor:pointer;font-size:13px;min-height:44px}
+#gameOver .gBtns button:hover:not(:disabled){filter:brightness(1.2)}
+#gameOver .gBtns button:disabled{opacity:.4;cursor:not-allowed}
 #trade h2{font-size:16px;color:var(--accent);margin-bottom:10px}
 #trade .row{display:flex;justify-content:space-between;align-items:center;margin:8px 0;font-size:14px}
 #trade .row .qty{color:var(--ink-dim);font-variant-numeric:tabular-nums}
@@ -233,6 +243,18 @@ kbd{background:#3a4330;border:1px solid #5a6748;border-bottom-width:2px;border-r
     <h2>主线达成 · 船修好了</h2>
     <p>咣当！破船翻正——<b>一头穿水手服的野狼</b>从船底钻了出来：<br>「嗷——我是船长。船是倒着造的，但能开。」</p>
     <p class="vSub">荒野仍在。自由模式已开启：继续开拓，或乘着倒船去往下一个也许存在的海。</p>
+  </div>
+</div>
+
+<!-- Game Over（spec 012） -->
+<div id="gameOver">
+  <div class="gBox">
+    <h2>拓荒队全灭了</h2>
+    <p>商摊的篝火渐渐冷了…</p>
+    <div class="gBtns">
+      <button id="goLoad">读档重来</button>
+      <button id="goRestart">重新开始</button>
+    </div>
   </div>
 </div>
 
