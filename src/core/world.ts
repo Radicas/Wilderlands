@@ -4,7 +4,7 @@
  * 纯地形函数（噪声/地面高度）单一权威在 ../sim/terrain.ts，这里 re-export。
  */
 import * as THREE from 'three';
-import { CFG, PALETTE, WORLD, WANDERER_NAMES } from '../config';
+import { CFG, PALETTE, SCENE, WORLD, WANDERER_NAMES } from '../config';
 import type { BerryEnt, RockEnt, Tile, TreeEnt, WandererEnt } from '../types';
 import { berries, interMeshes, merchantPos, rocks, setWanderer, shop, tiles, trees } from '../state';
 import { scene } from './renderer';
@@ -108,9 +108,9 @@ export function tileAt(x: number, z: number): Tile | undefined {
 }
 
 // ---- 松树（InstancedMesh：220 棵树共用 2 个 draw call）----
-const treeGeo = new THREE.ConeGeometry(0.6, 2.0, 6);
+const treeGeo = new THREE.ConeGeometry(SCENE.treeCrownR, SCENE.treeCrownH, 6);
 const treeMat = new THREE.MeshLambertMaterial({ color: PALETTE.treeCrown });
-const trunkGeo = new THREE.CylinderGeometry(0.16, 0.22, 0.8, 5);
+const trunkGeo = new THREE.CylinderGeometry(SCENE.treeTrunkRt, SCENE.treeTrunkRb, SCENE.treeTrunkH, 5);
 const trunkMat = new THREE.MeshLambertMaterial({ color: PALETTE.treeTrunk });
 
 let trunkIM: THREE.InstancedMesh;
@@ -124,19 +124,89 @@ const _dummy = new THREE.Object3D();
 function applyTreeVisible(id: number, v: boolean): void {
   const orig = treeOriginals[id];
   if (!orig) return;
+  const di = dyingTrees.findIndex((d) => d.id === id);
   if (v) {
+    if (di >= 0) dyingTrees.splice(di, 1); // 重生打断补间
     trunkIM.setMatrixAt(id, orig.trunk);
     crownIM.setMatrixAt(id, orig.crown);
-  } else {
-    _dummy.position.set(0, -100, 0); // 直接移到地下深处，避免 scale=0 在某些驱动下的法线问题
-    _dummy.scale.set(0, 0, 0);
-    _dummy.rotation.set(0, 0, 0);
-    _dummy.updateMatrix();
-    trunkIM.setMatrixAt(id, _dummy.matrix);
-    crownIM.setMatrixAt(id, _dummy.matrix);
+    trunkIM.instanceMatrix.needsUpdate = true;
+    crownIM.instanceMatrix.needsUpdate = true;
+  } else if (di < 0) {
+    // 进入 0.4s 下沉缩小补间（gather-feedback），tickDeathAnims 落终态
+    dyingTrees.push({ id, t: 0, trunk: readTransform(orig.trunk), crown: readTransform(orig.crown) });
   }
-  trunkIM.instanceMatrix.needsUpdate = true;
-  crownIM.instanceMatrix.needsUpdate = true;
+}
+
+/** —— 消亡补间（change gather-feedback F3）：砍倒/采空 → 0.4 秒下沉缩小，替代瞬时"橡皮擦" —— */
+const DEATH_DUR = 0.4;
+
+interface DeadTransform { p: THREE.Vector3; q: THREE.Quaternion; s: THREE.Vector3 }
+interface DyingTree { id: number; t: number; trunk: DeadTransform; crown: DeadTransform }
+interface DyingRock { id: number; t: number; tr: DeadTransform }
+
+const dyingTrees: DyingTree[] = [];
+const dyingRocks: DyingRock[] = [];
+const _dp = new THREE.Vector3();
+const _dq = new THREE.Quaternion();
+const _ds = new THREE.Vector3();
+
+/** 实例矩阵落地下深处终态（scale=0 在某些驱动下有法线问题，沿用位移方案） */
+function setInstanceUnder(im: THREE.InstancedMesh, id: number): void {
+  _dummy.position.set(0, -100, 0);
+  _dummy.scale.set(0, 0, 0);
+  _dummy.rotation.set(0, 0, 0);
+  _dummy.updateMatrix();
+  im.setMatrixAt(id, _dummy.matrix);
+}
+
+function readTransform(m: THREE.Matrix4): DeadTransform {
+  const tr = { p: new THREE.Vector3(), q: new THREE.Quaternion(), s: new THREE.Vector3() };
+  m.decompose(tr.p, tr.q, tr.s);
+  return tr;
+}
+
+/** 每帧由 stepGame 调用：推进补间，完成后落入地下终态 */
+export function tickDeathAnims(dt: number): void {
+  if (trunkIM) {
+    let dirty = false;
+    for (let i = dyingTrees.length - 1; i >= 0; i--) {
+      const d = dyingTrees[i];
+      d.t += dt;
+      const k = Math.max(0, 1 - d.t / DEATH_DUR);
+      for (const [tr, im] of [[d.trunk, trunkIM], [d.crown, crownIM]] as [DeadTransform, THREE.InstancedMesh][]) {
+        _dp.copy(tr.p); _dp.y -= (1 - k) * 0.3;
+        _ds.copy(tr.s).multiplyScalar(k);
+        _dummy.position.copy(_dp); _dummy.quaternion.copy(tr.q); _dummy.scale.copy(_ds);
+        _dummy.updateMatrix();
+        im.setMatrixAt(d.id, _dummy.matrix);
+      }
+      if (d.t >= DEATH_DUR) {
+        setInstanceUnder(trunkIM, d.id); setInstanceUnder(crownIM, d.id); // 地下深处终态，拾取彻底失效
+        dyingTrees.splice(i, 1);
+      }
+      dirty = true;
+    }
+    if (dirty) { trunkIM.instanceMatrix.needsUpdate = true; crownIM.instanceMatrix.needsUpdate = true; }
+  }
+  if (rockIM) {
+    let dirty = false;
+    for (let i = dyingRocks.length - 1; i >= 0; i--) {
+      const d = dyingRocks[i];
+      d.t += dt;
+      const k = Math.max(0, 1 - d.t / DEATH_DUR);
+      _dp.copy(d.tr.p); _dp.y -= (1 - k) * 0.3;
+      _ds.copy(d.tr.s).multiplyScalar(k);
+      _dummy.position.copy(_dp); _dummy.quaternion.copy(d.tr.q); _dummy.scale.copy(_ds);
+      _dummy.updateMatrix();
+      rockIM.setMatrixAt(d.id, _dummy.matrix);
+      if (d.t >= DEATH_DUR) {
+        setInstanceUnder(rockIM, d.id);
+        dyingRocks.splice(i, 1);
+      }
+      dirty = true;
+    }
+    if (dirty) rockIM.instanceMatrix.needsUpdate = true;
+  }
 }
 
 /** 给一个逻辑锚点 Object3D 覆写 visible setter，让外部 `ent.mesh.visible = false` 仍可用 */
@@ -171,16 +241,16 @@ export function buildTrees(): void {
   crownIM.castShadow = true;
 
   spots.forEach((p, i) => {
-    // trunk：y=0.4（圆柱中心，高 0.8 → 底部接地）
-    _dummy.position.set(p.x, p.y + 0.4, p.z);
+    // trunk：几何中心半高 → 底部接地（尺寸见 config.SCENE）
+    _dummy.position.set(p.x, p.y + SCENE.treeTrunkH / 2, p.z);
     _dummy.rotation.set(0, 0, 0);
     _dummy.scale.set(1, 1, 1);
     _dummy.updateMatrix();
     trunkIM.setMatrixAt(i, _dummy.matrix);
     const trunkOrig = _dummy.matrix.clone();
 
-    // crown：y=1.7，随机绕 Y 旋转
-    _dummy.position.set(p.x, p.y + 1.7, p.z);
+    // crown：压干顶略咬合，随机绕 Y 旋转
+    _dummy.position.set(p.x, p.y + SCENE.treeTrunkH + SCENE.treeCrownH / 2 - 0.1, p.z);
     _dummy.rotation.set(0, Math.random() * Math.PI * 2, 0);
     _dummy.scale.set(1, 1, 1);
     _dummy.updateMatrix();
@@ -208,23 +278,23 @@ export function buildTrees(): void {
 }
 
 // ---- 岩脉（InstancedMesh：90 块石头共用 1 个 draw call）----
-const rockGeo = new THREE.DodecahedronGeometry(0.7, 0);
+const rockGeo = new THREE.DodecahedronGeometry(SCENE.rockR, 0);
 const rockMat = new THREE.MeshLambertMaterial({ color: PALETTE.rock });
 
 let rockIM: THREE.InstancedMesh;
 const rockOriginals: THREE.Matrix4[] = [];
 
 function applyRockVisible(id: number, v: boolean): void {
+  const orig = rockOriginals[id];
+  if (!orig) return;
+  const di = dyingRocks.findIndex((d) => d.id === id);
   if (v) {
-    rockIM.setMatrixAt(id, rockOriginals[id]);
-  } else {
-    _dummy.position.set(0, -100, 0);
-    _dummy.scale.set(0, 0, 0);
-    _dummy.rotation.set(0, 0, 0);
-    _dummy.updateMatrix();
-    rockIM.setMatrixAt(id, _dummy.matrix);
+    if (di >= 0) dyingRocks.splice(di, 1);
+    rockIM.setMatrixAt(id, orig);
+    rockIM.instanceMatrix.needsUpdate = true;
+  } else if (di < 0) {
+    dyingRocks.push({ id, t: 0, tr: readTransform(orig) });
   }
-  rockIM.instanceMatrix.needsUpdate = true;
 }
 
 export function buildRocks(): void {
@@ -248,7 +318,7 @@ export function buildRocks(): void {
   rockIM.castShadow = true;
 
   spots.forEach((s, i) => {
-    _dummy.position.set(s.p.x, s.p.y + 0.35, s.p.z);
+    _dummy.position.set(s.p.x, s.p.y + SCENE.rockR / 2, s.p.z);
     _dummy.rotation.copy(s.rot);
     _dummy.scale.set(1, s.sc, 1);
     _dummy.updateMatrix();

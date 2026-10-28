@@ -7,7 +7,7 @@ import * as THREE from 'three';
 import { ANIM, CFG, ITEMS, PALETTE, START_INV, START_PARTY, UNIT_NAMES } from '../config';
 import type { AnimState, BerryEnt, Inventory, LimbRefs, Personality, Mood, RockEnt, Tile, TreeEnt, Unit, UnitRole, UnitTask } from '../types';
 import { rollPersonality, findIdleWork, decideWolfReaction, speedMoodMultiplier, workMoodMultiplier, moodStep, MOOD_LOG, QUIPS_WORK, QUIPS_WOLF, QUIPS_NIGHT, QUIP_HUNGER, type IdleTarget, type WolfReaction } from '../systems/personality';
-import { buildings, interMeshes, logMsg, merchantPos, players, rocks, berries, removeSelected, selected, selectableMeshes, timeOfDay, trees, wolves } from '../state';
+import { buildings, gainFx, interMeshes, logMsg, merchantPos, players, rocks, berries, removeSelected, selected, selectableMeshes, timeOfDay, trees, wolves } from '../state';
 import { invAdd, invCanAdd, invRatio } from '../systems/inventory';
 import { plantTile } from '../systems/farm';
 import { atkBonus, capacityBonus, emptySkills, gainSkill, harvestBonus, refreshCapacity } from '../systems/skills';
@@ -371,6 +371,7 @@ export class PioneerUnit implements Unit {
           gainSkill(attacker, 'combat', 3);
         }
         logMsg('击败野狼，食物 +2');
+        gainFx.push({ x: this.pos.x, y: 2.05, z: this.pos.z, text: '+2 食物', color: '#e8d06a' });
       }
     }
   }
@@ -671,6 +672,7 @@ export class PioneerUnit implements Unit {
       gainSkill(this, 'gather', 1);
       refreshCapacity(this); // 采集升级 → 负重立即 +4（修复：游戏中升级即时生效）
       logMsg('砍倒树木，木材 +' + CFG.woodPerTree);
+      gainFx.push({ x: this.pos.x, y: 2.05, z: this.pos.z, text: '+' + CFG.woodPerTree + ' 木材', color: '#d9b06a' });
       // 取消所有正在采这棵树的角色任务
       for (const u of [...players, ...wolves]) {
         if (u.task?.type === 'gather' && u.task.target === tree) {
@@ -689,6 +691,7 @@ export class PioneerUnit implements Unit {
       gainSkill(this, 'gather', 1);
       refreshCapacity(this);
       logMsg('开采矿石，石头 +' + CFG.stonePerVein);
+      gainFx.push({ x: this.pos.x, y: 2.05, z: this.pos.z, text: '+' + CFG.stonePerVein + ' 石头', color: '#b8b8c8' });
       if (rock.hp <= 0) {
         rock.alive = false;
         rock.respawn = 90;
@@ -722,6 +725,7 @@ export class PioneerUnit implements Unit {
       tile.ear.visible = false;
       gainSkill(this, 'farm', 1);
       logMsg('收获作物，食物 +' + gain);
+      gainFx.push({ x: this.pos.x, y: 2.05, z: this.pos.z, text: '+' + gain + ' 食物', color: '#e8d06a' });
     } else if (t.kind === 'sow') {
       const tile = t.target as Tile;
       // 走到田边后播种（plantTile 内部会校验 state=0 和种子）
@@ -740,6 +744,7 @@ export class PioneerUnit implements Unit {
       gainSkill(this, 'gather', 1);
       refreshCapacity(this);
       logMsg('采集浆果，浆果 +' + CFG.berryFood);
+      gainFx.push({ x: this.pos.x, y: 2.05, z: this.pos.z, text: '+' + CFG.berryFood + ' 浆果', color: '#e88a8a' });
       for (const u of [...players, ...wolves]) {
         if (u.task?.type === 'gather' && u.task.target === berry) {
           u.task = null;

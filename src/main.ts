@@ -15,6 +15,8 @@ import { buyPrice, soldToday } from './systems/trade';
 import { ship } from './systems/ship';
 import { disableWolves, spawnWolf, updateWolves, updateWorld } from './systems/combat';
 import { updateDayNight } from './systems/daynight';
+import { initFloaters, drainGainFx } from './ui/floaters';
+import { tickDeathAnims } from './core/world';
 import { updateFarms } from './systems/farm';
 import { initInput, keys } from './core/input';
 import { initHUD, updateHUD } from './ui/hud';
@@ -87,6 +89,8 @@ const TURBO = Math.max(1, Math.min(16, Math.floor(Number(new URLSearchParams(loc
 
 function stepGame(dt: number): void {
   updateDayNight(dt);
+  tickDeathAnims(dt);
+  drainGainFx();
   updateShip(dt);
   updateFarms(dt);
   updateWolves(dt);
@@ -132,6 +136,7 @@ window.addEventListener('resize', resize);
 if (new URLSearchParams(location.search).get('nowolf') === '1') disableWolves();
 
 // 只读调试句柄（自动化验证 / 开发自检用，与 __GAME_READY 同模式）
+initFloaters();
 (window as unknown as { __GAME__: unknown }).__GAME__ = {
   get gold() {
     return gold;
@@ -174,6 +179,7 @@ if (new URLSearchParams(location.search).get('nowolf') === '1') disableWolves();
     return {
       trees: trees.filter((t) => t.alive).map((t) => ({ x: t.p.x, y: t.p.y, z: t.p.z })),
       rocks: rocks.filter((r) => r.alive).map((r) => ({ x: r.p.x, y: r.p.y, z: r.p.z })),
+      berries: berries.filter((b) => b.alive).map((b) => ({ x: b.p.x, y: b.p.y, z: b.p.z })),
       merchant: { x: merchantPos.x, z: merchantPos.z },
       ship: { x: CFG.shipPos.x, z: CFG.shipPos.z, wood: ship.wood, stone: ship.stone, done: ship.done },
       wanderer: wanderer

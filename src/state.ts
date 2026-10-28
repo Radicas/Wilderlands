@@ -49,6 +49,9 @@ export function removeSelected(u: Unit): void {
   }
 }
 
+/** 收获飘字事件缓冲（entities 推入，ui/floaters 每帧消费；change gather-feedback） */
+export const gainFx: { x: number; y: number; z: number; text: string; color?: string }[] = [];
+
 /** 模式：0 探索 / 1 播种 / 2 围栏 / 3 木屋 */
 export let modeNow = 0;
 export function setMode(m: number): void {

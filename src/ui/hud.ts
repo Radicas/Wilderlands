@@ -186,14 +186,17 @@ export function updateHUD(selected: Unit[]): void {
   let action = '';
   if (u.down) action = '倒地恢复中';
   else if (u.task) {
-    if (u.task.type === 'attack') action = '战斗中';
-    else if (u.task.type === 'trade') action = '走向商摊';
-    else if (u.task.kind === 'tree') action = '正在砍树';
-    else if (u.task.kind === 'rock') action = '正在采矿';
-    else if (u.task.kind === 'berry') action = '正在采浆果';
-    else if (u.task.kind === 'crop') action = '正在收获';
-    else action = '移动中';
-  } else if (u.mood !== 'neutral') action = moodLabel[u.mood] ?? '';
+    // 干活进度条（change gather-feedback F1）：体力×饥饿综合健康度，采集期间随体力流失缓降
+    const p = Math.round((u.hunger / 100 * 0.5 + u.attrs.stamina / 100 * 0.5) * 10);
+    const bar = '▓'.repeat(p) + '░'.repeat(10 - p);
+    if (u.task.type === 'attack') action = '战斗中　' + bar;
+    else if (u.task.type === 'trade') action = '走向商摊　' + bar;
+    else if (u.task.kind === 'tree') action = '正在砍树　' + bar;
+    else if (u.task.kind === 'rock') action = '正在采矿　' + bar;
+    else if (u.task.kind === 'berry') action = '正在采浆果　' + bar;
+    else if (u.task.kind === 'crop') action = '正在收获　' + bar;
+    else action = '移动中　' + bar;
+  } else if (u.mood !== 'neutral') action = (moodLabel[u.mood] ?? '') + '　…';
   else action = '空闲';
   (document.getElementById('curAction') as HTMLElement).textContent = action;
 

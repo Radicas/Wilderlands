@@ -143,6 +143,9 @@ kbd{background:#3a4330;border:1px solid #5a6748;border-bottom-width:2px;border-r
   #modes{flex-wrap:wrap;max-width:96vw;justify-content:center}
   .mbtn{padding:5px 8px;font-size:11px}
 }
+#floaters{position:fixed;inset:0;pointer-events:none;z-index:6;overflow:hidden}
+.floater{position:absolute;transform:translate(-50%,-50%);font:700 15px/1 ui-rounded,system-ui,sans-serif;text-shadow:0 1px 3px rgba(0,0,0,.8);animation:floatUp 1.2s ease-out forwards;white-space:nowrap}
+@keyframes floatUp{from{opacity:1;transform:translate(-50%,-50%)}to{opacity:0;transform:translate(-50%,calc(-50% - 46px))}}
 </style>
 </head>
 <body>

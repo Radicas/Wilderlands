@@ -210,6 +210,43 @@ async function liveBrowser() {
   return _browser;
 }
 
+async function g21_gather_feedback(page) {
+  await zoomOut(page);
+  const home = { x: (await gs(page)).units[0].x, z: (await gs(page)).units[0].z };
+  const tree = await nearest(page, 'trees', home.x, home.z, 30);
+  if (!tree) { check('收获飘字', false, '30m 内无树'); return; }
+  await page.evaluate(([tx, tz]) => {
+    window.__GAME__.setPos(0, tx, tz);
+    window.__GAME__.setCamTarget(tx, tz); // 镜头跟到树旁，否则投影出视锥点不到
+  }, [tree.x + 2, tree.z + 2]);
+  await sleep(500);
+  if (!(await clickUnit(page, 0))) { check('收获飘字', false, '无法选中主角'); return; }
+  const cnt0 = (await page.evaluate(() => window.__GAME__.targets)).trees.length;
+  const okCmd = await rightClickEntity(page, tree.x, tree.z, ['gather'], 500);
+  if (!okCmd) { check('收获飘字', false, '树右键未下达采集'); return; }
+
+  // ① 进包瞬间飘字上浮（DOM 层，1.2s 自清）
+  const fl = await waitFor(page, () => [...document.querySelectorAll('#floaters .floater')].some((e) => e.textContent.includes('木材')), '砍树飘字', 30000, 120);
+  check('收获进包出现飘字', fl);
+
+  // ② 消亡动画（0.4s 下沉缩小）结束后树木计数落账
+  const gone = await waitFor(page, (n) => window.__GAME__.targets.trees.length < n, '消亡动画完成', 15000, 150, cnt0);
+  check('消亡动画后树木计数减一', gone, 'trees ' + cnt0 + '→' + (await page.evaluate(() => window.__GAME__.targets.trees.length)));
+
+  // ③ 干活状态条：满包拒收期间任务仍在场，文案带 ▓ 条
+  const tree2 = await nearest(page, 'trees', home.x, home.z, 30);
+  if (!tree2) { check('干活状态条', false, '无第二棵树'); return; }
+  await page.evaluate(([tx, tz]) => { window.__GAME__.setInv(0, 'wood', 40); window.__GAME__.setPos(0, tx, tz); window.__GAME__.setCamTarget(tx, tz); }, [tree2.x + 2, tree2.z + 2]);
+  await sleep(500);
+  const ok2 = await rightClickEntity(page, tree2.x, tree2.z, ['gather'], 600);
+  const bar = ok2 ? await waitFor(page, () => { const a = (document.getElementById('curAction') || {}).textContent || ''; return a.includes('正在砍树') && a.includes('▓') ? a : false; }, '状态条', 8000, 120) : '';
+  check('干活状态条随行为显示', !!bar, 'action=' + bar);
+  // ④ 满包拒绝无收获飘字（负断言：拒绝发生后再查 floater 层无"木材"新增）
+  const refused = await waitFor(page, () => (document.querySelector('#log') || {}).textContent?.includes('背包已满'), '满包拒绝日志', 60000, 200);
+  const flGained = await page.evaluate(() => [...document.querySelectorAll('#floaters .floater')].some((e) => e.textContent.includes('木材')));
+  check('背包满拒绝时不弹收获飘字', refused && !flGained, 'refused=' + refused + ' floater=' + flGained);
+}
+
 async function group(browser, port, name, fn, opts = {}) {
   console.log('\n=== ' + name + (opts.slow ? ' [slow]' : '') + ' ===');
   const qs = new URLSearchParams(opts.path ? opts.path.replace(/^\?/, '') : '');
@@ -1063,22 +1100,22 @@ async function g20_character_ai(page) {
   await sleep(1200);
   const mainTask = (await gs(page)).units[0].task;
   check('懒惰角色闲时发呆（无任务）', !mainTask, 'task=' + mainTask);
-  // ③ HUD「当前行为」文案跟随任务（点选正在干活的巴巴）
-  let action = '';
-  for (let tryN = 0; tryN < 3 && !action; tryN++) {
-    if (await clickUnit(page, 1)) {
-      await sleep(300);
-      action = await page.evaluate(() => (document.getElementById('curAction') || {}).textContent || '');
-      if (!['正在砍树', '正在采矿', '正在采浆果'].includes(action)) action = '';
-    } else await sleep(400);
+  // ③ HUD「当前行为」文案跟随任务：巴巴（1）正被 ① 的自治采集驱动，选中读文案
+  //    （主角在家点 14m 内无资源属正确行为；文案随 gather 轮动，短轮询跨过 ~2s 扫描间歇）
+  const sel1 = await clickUnit(page, 1);
+  let act = '';
+  for (let i = 0; i < 30 && !act; i++) {
+    const a = await page.evaluate(() => (document.getElementById('curAction') || {}).textContent || '');
+    if (/正在砍树|正在采矿|正在采浆果/.test(a)) act = a;
+    else await sleep(150);
   }
-  check('HUD 当前行为文案随任务变化', !!action, 'action=' + action);
+  check('HUD 当前行为文案随任务变化', !!act, 'sel=' + sel1 + ' action=' + act);
   // ④ 话痨干活吐槽：日志出现「拓荒者·巴巴：」前缀行
   let quip = false;
-  for (let i = 0; i < 60 && !quip; i++) {
+  for (let i = 0; i < 150 && !quip; i++) {
     const lg = await logs(page);
     quip = lg.some((m) => (m || '').includes('拓荒者·巴巴：'));
-    if (!quip) await sleep(200);
+    if (!quip) await sleep(80);
   }
   check('话痨干活时吐槽（日志冒话）', quip);
 }
@@ -1103,6 +1140,7 @@ async function g20_character_ai(page) {
     ['G18 Shift 多选', g18_shift_multi, {}],
     ['G19 导入 JSON 存档', g19_import, {}],
     ['G20 角色AI', g20_character_ai, {}],
+    ['G21 收获反馈', g21_gather_feedback, {}],
   ];
   const t0 = Date.now();
   const list = ONLY.length ? GROUPS.filter((g) => ONLY.some((o) => g[0].toUpperCase().startsWith(o))) : GROUPS;
