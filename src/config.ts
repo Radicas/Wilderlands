@@ -182,9 +182,9 @@ export const SOUND = {
 /** 树种生态表（forest-life D1）：产量/工时/成材总时长（含树桩期）单一来源。
  *  index 即 species：0 松（回归锚，与旧版数值全等）/ 1 橡（慢工粗木）/ 2 桦（快长薄产） */
 export const TREES = [
-  { key: 'pine', name: '松树', wood: 3, workDur: 2.2, toMature: 45 },
-  { key: 'oak', name: '橡树', wood: 4, workDur: 2.8, toMature: 60 },
-  { key: 'birch', name: '白桦', wood: 2, workDur: 1.8, toMature: 30 },
+  { key: 'pine', name: '松树', wood: 3, workDur: 2.2, toMature: 45, fallDur: 0.55 },
+  { key: 'oak', name: '橡树', wood: 4, workDur: 2.8, toMature: 60, fallDur: 0.75 },
+  { key: 'birch', name: '白桦', wood: 2, workDur: 1.8, toMature: 30, fallDur: 0.42 },
 ] as const;
 /** 砍倒后的空窗（树桩）时长：其后幼苗→小树两级均分剩余成材时间 */
 export const TREE_STUMP = 15;

@@ -59,6 +59,26 @@ export const cam: CamState = {
 
 const UP = new THREE.Vector3(0, 1, 0);
 
+/* 砸地镜头微震（tree-fall D5）：偏移每帧由 updateCamera 全量重设自愈，零残留 */
+let shakeAmp = 0;
+let shakeT = 0;
+export function shakeCamera(a: number): void {
+  if (a > shakeAmp) shakeAmp = a;
+  shakeT = 0.18;
+}
+export function shakeValue(): number {
+  return shakeT > 0 ? shakeAmp * (shakeT / 0.18) : 0;
+}
+export function shakeTick(realDt: number): void {
+  if (shakeT <= 0) { shakeAmp = 0; return; }
+  shakeT = Math.max(0, shakeT - realDt);
+  const a = shakeAmp * (shakeT / 0.18);
+  if (a <= 0.0005) { if (shakeT <= 0) shakeAmp = 0; return; }
+  camera.position.x += (Math.random() * 2 - 1) * a;
+  camera.position.y += (Math.random() * 2 - 1) * a * 0.6;
+  camera.position.z += (Math.random() * 2 - 1) * a;
+}
+
 export function updateCamera(): void {
   const sp = new THREE.Spherical(cam.dist, cam.phi, cam.theta);
   camera.position.setFromSpherical(sp).add(cam.target);

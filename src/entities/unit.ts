@@ -776,6 +776,7 @@ export class PioneerUnit implements Unit {
       }
       invAdd(this, 'wood', sp.wood);
       tree.alive = false;
+      tree.fallYaw = Math.atan2(tree.p.x - this.pos.x, tree.p.z - this.pos.z); // 倒向背离伐木者（tree-fall D3）
       tree.mesh.visible = false; // 消亡补间须先于阶段写入（从当前阶段矩阵起步，forest-life）
       tree.phase = 'stump';
       tree.respawn = TREE_STUMP;

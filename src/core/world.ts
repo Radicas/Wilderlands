@@ -5,10 +5,10 @@
  */
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { CFG, PALETTE, SCENE, TREE_STAGE_SCALE, WORLD, WANDERER_NAMES } from '../config';
+import { CFG, PALETTE, SCENE, TREES, TREE_STAGE_SCALE, WORLD, WANDERER_NAMES } from '../config';
 import type { BerryEnt, RockEnt, Tile, TreeEnt, TreeMats, WandererEnt } from '../types';
 import { berries, interMeshes, merchantPos, rocks, setWanderer, shop, tiles, trees } from '../state';
-import { scene } from './renderer';
+import { scene, shakeCamera } from './renderer';
 import { sfx } from './sound';
 import { TILE, GRID, noise2D, groundHeightAt } from '../sim/terrain';
 
@@ -178,8 +178,13 @@ function applyTreeVisible(id: number, v: boolean): void {
   } else if (di < 0 && tree.phase !== 'stump') {
     // 进入 0.4s 下沉缩小补间（从当前阶段矩阵起步——砍小树也正确下沉）
     const m = tree.mats[tree.phase];
-    dyingTrees.push({ tree, t: 0, trunk: readTransform(m.trunk), crown: readTransform(m.crown) });
-    sfx('thud'); // 倒木沙沙（sound-system）
+    dyingTrees.push({
+      tree, t: 0,
+      dur: TREES[tree.species].fallDur, // 树种重量快照（tree-fall D2）
+      yaw: tree.fallYaw ?? Math.random() * Math.PI * 2,
+      trunkM: m.trunk.clone(), crownM: m.crown.clone(),
+    });
+    sfx('thud'); // 倒木沙沙（sound-system，起倒时刻）
   }
 }
 
@@ -187,11 +192,19 @@ function applyTreeVisible(id: number, v: boolean): void {
 const DEATH_DUR = 0.4;
 
 interface DeadTransform { p: THREE.Vector3; q: THREE.Quaternion; s: THREE.Vector3 }
-interface DyingTree { tree: TreeEnt; t: number; trunk: DeadTransform; crown: DeadTransform }
+interface DyingTree { tree: TreeEnt; t: number; dur: number; yaw: number; trunkM: THREE.Matrix4; crownM: THREE.Matrix4 }
 interface DyingRock { id: number; t: number; tr: DeadTransform }
 
 const dyingTrees: DyingTree[] = [];
 const dyingRocks: DyingRock[] = [];
+/* 倾覆矩阵链暂存（tree-fall D1，模块级复用零 GC） */
+const _FA_P = new THREE.Matrix4();
+const _FA_N = new THREE.Matrix4();
+const _FA_R = new THREE.Matrix4();
+const _FA_X = new THREE.Matrix4();
+const _FA_S = new THREE.Matrix4();
+const _FA_M = new THREE.Matrix4();
+const _FA_O = new THREE.Matrix4();
 const _dp = new THREE.Vector3();
 const _dq = new THREE.Quaternion();
 const _ds = new THREE.Vector3();
@@ -218,18 +231,26 @@ export function tickDeathAnims(dt: number): void {
     for (let i = dyingTrees.length - 1; i >= 0; i--) {
       const d = dyingTrees[i];
       d.t += dt;
-      const k = Math.max(0, 1 - d.t / DEATH_DUR);
+      const k = Math.min(1, d.t / d.dur);
+      const e = 1 - (1 - k) * (1 - k); // easeOutQuad：起倒快落地沉
+      const theta = e * (Math.PI / 2 - 0.06);
+      const sh = k > 0.85 ? 1 - ((k - 0.85) / 0.15) * 0.18 : 1; // 尾段微收出画，规避躺平穿地
       const rig = treeRigs[d.tree.species];
-      for (const [tr, im] of [[d.trunk, rig.trunkIM], [d.crown, rig.crownIM]] as [DeadTransform, THREE.InstancedMesh][]) {
-        _dp.copy(tr.p); _dp.y -= (1 - k) * 0.3;
-        _ds.copy(tr.s).multiplyScalar(k);
-        _dummy.position.copy(_dp); _dummy.quaternion.copy(tr.q); _dummy.scale.copy(_ds);
-        _dummy.updateMatrix();
-        im.setMatrixAt(d.tree.slot, _dummy.matrix);
-      }
-      if (d.t >= DEATH_DUR) {
-        setInstanceUnder(rig.trunkIM, d.tree.slot); setInstanceUnder(rig.crownIM, d.tree.slot); // 地下深处终态，拾取彻底失效
+      const p = d.tree.p;
+      _FA_P.makeTranslation(p.x, p.y, p.z);
+      _FA_N.makeTranslation(-p.x, -p.y, -p.z);
+      _FA_R.makeRotationY(d.yaw);
+      _FA_X.makeRotationX(theta);
+      _FA_R.multiply(_FA_X); // 局部前倾（+Z 倒向 = yaw 方位，D3 几何）
+      _FA_M.copy(_FA_P).multiply(_FA_R).multiply(_FA_N);
+      if (sh < 1) { _FA_S.makeScale(sh, sh, sh); _FA_M.copy(_FA_P).multiply(_FA_S).multiply(_FA_N).multiply(_FA_M); }
+      _FA_O.copy(_FA_M).multiply(d.trunkM); rig.trunkIM.setMatrixAt(d.tree.slot, _FA_O);
+      _FA_O.copy(_FA_M).multiply(d.crownM); rig.crownIM.setMatrixAt(d.tree.slot, _FA_O);
+      if (k >= 1) {
+        setInstanceUnder(rig.trunkIM, d.tree.slot); setInstanceUnder(rig.crownIM, d.tree.slot); // 终态与空窗语义不变（spec 场景三）
         dyingTrees.splice(i, 1);
+        shakeCamera(0.016 + 0.05 * d.dur); // 砸地镜头微震，按重量分档（tree-fall D4）
+        sfx('down');
       }
       dirty = true;
     }
@@ -254,6 +275,14 @@ export function tickDeathAnims(dt: number): void {
     }
     if (dirty) rockIM.instanceMatrix.needsUpdate = true;
   }
+}
+
+/** 进行中消亡计数（主循环廉价探测，tree-fall 夹具用） */
+export function dyingCount(): number { return dyingTrees.length; }
+
+/** 进行中消亡样本只读快照（G25 断言用；逐字段拷贝不泄漏内部对象） */
+export function dyingSnapshot(): { species: number; t: number; dur: number; yaw: number }[] {
+  return dyingTrees.map((d) => ({ species: d.tree.species, t: d.t, dur: d.dur, yaw: d.yaw }));
 }
 
 /** 给一个逻辑锚点 Object3D 覆写 visible setter，让外部 `ent.mesh.visible = false` 仍可用 */

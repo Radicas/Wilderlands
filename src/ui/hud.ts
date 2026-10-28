@@ -34,7 +34,7 @@ export function initHUD(): void {
   const mb = document.createElement('button');
   mb.id = 'muteBtn';
   mb.textContent = isMuted() ? '🔇' : '🔊';
-  mb.style.cssText = 'position:fixed;right:12px;top:12px;z-index:60;background:#0008;border:1px solid #6b5;padding:3px 8px;color:#cde8b8;border-radius:6px;cursor:pointer;font-size:14px';
+  mb.style.cssText = 'position:fixed;right:12px;top:44px;z-index:60;background:#0008;border:1px solid #6b5;padding:3px 8px;color:#cde8b8;border-radius:6px;cursor:pointer;font-size:14px';
   mb.addEventListener('click', () => toggleMuted());
   document.body.appendChild(mb);
   onMutedChange((m) => { mb.textContent = m ? '🔇' : '🔊'; });

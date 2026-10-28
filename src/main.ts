@@ -4,6 +4,8 @@
  */
 import * as THREE from 'three';
 import { setBed, soundStats, soundTick, unlockSound } from './core/sound';
+import { dyingCount, dyingSnapshot } from './core/world';
+import { shakeTick, shakeValue } from './core/renderer';
 import { CFG } from './config';
 import { renderer, scene, camera, updateCamera, resize, updateCameraMove, cam } from './core/renderer';
 import { buildBerries, buildGround, buildMerchant, buildRocks, buildTrees, buildWanderer } from './core/world';
@@ -100,6 +102,10 @@ function stepGame(dt: number): void {
   wolves.forEach((w) => w.update(dt));
 }
 
+const fallRing: { species: number; t: number; dur: number; yaw: number }[] = [];
+let fellSeen: { x: number; z: number } | null = null; // 倒地瞬间伐木者站位（倒向参照，G25 用）
+let fallPeak = 0;
+
 function loop(): void {
   requestAnimationFrame(loop);
   const real = Math.min(clock.getDelta(), 0.05);
@@ -119,7 +125,22 @@ function loop(): void {
   }
 
   updateCamera();
-  updateHUD(selected);
+  shakeTick(real); // 震屏叠加在重设之后（下帧自愈）
+
+  // 倒地帧级采样环（G25：倒程在 turbo 下不足一帧真实时间，轮询采不到，帧环兜底）
+  const fv = shakeValue();
+  if (fv > fallPeak) fallPeak = fv;
+  if (dyingCount()) {
+    if (!fellSeen) {
+      const pu = players[0];
+      fellSeen = { x: pu.pos.x, z: pu.pos.z };
+    }
+    for (const s of dyingSnapshot()) {
+      fallRing.push(s);
+      if (fallRing.length > 90) fallRing.shift();
+    }
+  }
+  updateHUD(selected); // （tree-fall 补丁曾误吞此行——HUD 冻结的元凶）
   renderer.render(scene, camera);
 }
 
@@ -131,7 +152,7 @@ loop();
 window.addEventListener('resize', resize);
 
 // 场景就绪标记（自检用）
-(window as unknown as { __GAME_READY: boolean }).__GAME_READY = true;
+(window as unknown as { __GAME_READY: boolean }).__GAME_READY = true; // loop() 首帧已同步画过 HUD；曾有的 rAF 延迟包裹是误诊期产物
 
 // ?nowolf=1 测试夹具：清场野狼并停止刷怪。URL 参数跨页面 reload 持续生效，
 // 长流程自动化在 turbo 快进下不再被狼群放倒队员/刷屏日志（玩家路径不带参数，无影响）
@@ -222,8 +243,9 @@ setBed(timeOfDay.isNight);
     (u.inv as Record<string, number>)[id] = n;
   },
   /** 自动化验证夹具：把相机目标移到指定世界坐标（黑盒测试视角对准用） */
-  setCamTarget(x: number, z: number) {
+  setCamTarget(x: number, z: number, snap = false) {
     cam.target.set(x, 0, z);
+    if (snap) updateCamera(); // 直写目标零 lerp 等待（饥饿时盲点三连击的根治）
   },
   /** 自动化验证夹具：现场生成一名新拓荒者（多选/转移等双人场景用，绕开招募条件门；空背包，语义同招募入队） */
   addPlayer(x: number, z: number, name?: string) {
@@ -242,6 +264,14 @@ setBed(timeOfDay.isNight);
     if (tg.p) return { x: tg.p.x, z: tg.p.z };
     if (typeof tg.x === 'number' && typeof tg.z === 'number') return { x: tg.x, z: tg.z };
     return null;
+  },
+  fallInfo(reset = false) {
+    if (reset) { fallRing.length = 0; fallPeak = 0; fellSeen = null; }
+    return { dying: dyingSnapshot(), ring: [...fallRing], peak: fallPeak, shake: shakeValue(), feller: fellSeen ? { ...fellSeen } : null };
+  },
+  fallReset() {
+    fallRing.length = 0;
+    fallPeak = 0;
   },
   soundStats() {
     return soundStats();

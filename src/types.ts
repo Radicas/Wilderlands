@@ -123,6 +123,8 @@ export interface TreeEnt {
   slot: number;
   phase: TreePhase;
   mats: TreeMats;
+  /** 倾倒方向（tree→伐木者反向量角，tree-fall D3；纯表现不入任何持久化） */
+  fallYaw?: number;
 }
 
 export interface RockEnt {
