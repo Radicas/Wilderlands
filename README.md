@@ -1,6 +1,6 @@
 # Wilderlands · 荒野开拓者
 
-> 一款高自由度、带点荒诞的种田生存沙盒 Web 游戏。带领三人拓荒小队砍树、采矿、播种、养点奇怪的东西、打野狼、与游商交易——没有剧情牵着你走，你的目标由你自己定。
+> 一款高自由度、带点荒诞的种田生存沙盒 Web 游戏。开局只有一条命——罗恩。一个人砍树、采矿、播种、打野狼、与游商交易，队伍是你自己挣来的：先有屋顶、有余粮、攒够金币，才有人愿意跟你走。没有剧情牵着你走，你的目标由你自己定。
 > 核心：沙盒 · 种田 · 养殖 · 生存 · 荒诞 · 团队管理。
 
 ## 技术栈
@@ -42,7 +42,7 @@ npm run preview    # 本地预览构建产物（http://localhost:4173）
 3. **建造**：`3` / `4` 模式右键放置围栏与木屋（从选中角色背包扣木材/石头）；木屋附近休息可缓慢回血。
 4. **战斗**：野狼会游荡并袭击落单的人；右键点狼进入战斗（互相掉血，倒地可复原）。击杀野狼，食物 +2 进击杀者背包。**夜晚野狼侦测更远、跑得更快、刷新更频繁。**
 5. **贸易**：右键点游商帐篷打开贸易站——**卖食物 3 金/个、卖木材 1 金/个、卖石头 1 金/个、买种子 2 金/个、买木矛 8 金（攻击 +3，装备给选中角色）**。买卖作用于选中角色的背包。
-6. **招募**：贸易站旁有流浪者，右键花费 **25 金** 招募入队（第 4 人空背包）；被招募后过一阵子会有新人来。
+6. **招募**：贸易站旁有流浪者。人很贵——右键招募需同时满足 **1 座木屋（屋顶）+ 全队口粮（食物+浆果）≥5 + 25 金**，缺什么日志会点名；达成后新队员空背包入队，被招募后过一阵子会有新的流浪者赶来。
 7. **昼夜**：约 4 分钟一个昼夜循环，光照/天色/雾色随之渐变，右上角显示时辰（清晨/正午/黄昏/夜晚/深夜）。
 8. **生存**：角色会饿（`F` 从选中首位背包扣食物喂所有选中者，食物不够可吃浆果）、受伤（倒地后会自己爬起）；野狼会随时间刷新。
 9. **背包**：每人独立背包（初始 木材3/石头2/食物3/种子1），容量 40 单位（木材/石头各占 2，食物/种子/浆果各占 1）；负重 ≥80% 移动减速 20%；选中面板可把物品转移给其他队员或丢弃。
@@ -109,22 +109,22 @@ src/
 ## 调试钩子
 
 - `window.__GAME_READY`：场景就绪标记（自动化自检用）。
-- `window.__GAME__`：只读运行状态（金币/人数/野狼数/浆果数/每人背包与负重/流浪者/时间）。
+- `window.__GAME__`：只读运行状态（金币/人数/野狼数/浆果数/每人背包与负重/流浪者/时间）+ 测试夹具：`setPos`（传送）、`setInv`（改背包）、`setCamTarget`（移相机）、`addPlayer`（现场补队员，多选/转移场景用）、`setPersonality`（注入固定性格，角色 AI 断言用）、`noWolves`（清狼停刷）。
 - `?debug=1`：把运行时状态持续渲染进顶部提示框（金币 + 小队合计 + 每人背包负重 + 技能经验，开发自检用）。
+- `?turbo=N`（1-16）：**测试专用时间倍率**，每帧跑 N 个固定步长子步，只快进游戏逻辑、不加速相机/输入/渲染；玩家默认不带参数=1×，平衡与手感零影响。
+- `?nowolf=1`：**测试专用**清场野狼并停止刷怪（URL 级，跨 reload 持续生效），长流程自动化免遭狼群放倒队员/刷屏日志。
 
 ## 下一步（迭代方向）
 
 v0.4 已完成（小步推进 + 自动回归）：S1 技能框架 → S2 技能加成+HUD → S3 动态价格 → S4 修船通关 → S5 背包交互（批量转移/丢弃 + 悬浮详情）→ **S6 headless 模拟层（剥离图形，node 纯后台跑整局）** → **S7 个体属性系统（spec 010，五维属性用就长 + 体力预算 + 存档 v4）**。
 
-待做（v0.5）：
-- S8 死亡系统（spec 011）：倒地救援窗/扶起/死亡/墓碑/散落/遗志传承/主角重伤回家
-- S9 医疗与肢体系（spec 012）：medic 技能/断肢概率/商人假肢
-- S10 养殖系统（spec 013）：驯养动物/看门狼/下蛋鸡
-- S11 队员怪癖（spec 014）：怕黑/贪吃/幸运 随机分配
-- spec 009 前端接 sim 渲染（YAGNI，模拟层稳定后接入）
-- S8 团队管理（队员性格荒诞化/职责分工）
-- 前端接入 sim 渲染（spec 009：UI/表现层挂到 sim 世界之上）
-- 通关后荒诞支线（会唱歌的石头、迷路的宠物狗狼群、船长派活）
+待做（v0.5，全部已迁入 OpenSpec 在途 change，进度看 `openspec/changes/`）：
+- `death-system`：倒地救援窗/扶起/死亡/墓碑/散落/遗志传承/主角重伤回家（含 v6 存档迁移）
+- `medical-limbs`：medic 技能/断肢概率/商人假肢
+- `animal-husbandry`：驯养动物/看门狼/下蛋鸡
+- `character-ai`：**已实施待归档**——性格三维度/情绪状态机/闲时自治/话痨吐槽/吃货啃浆果/HUD 当前行为，前端+sim 双镜像 163 断言 + 黑盒 G20（apply 中发现 v0.2 已交大半，剩余缺口见 `openspec/changes/character-ai/tasks.md`）
+- `sim-frontend-unify`：前端接 sim 渲染（spec 009 的 OpenSpec 化，YAGNI，模拟层稳定后接入）
+- 通关后荒诞支线（会唱歌的石头、迷路的宠物狗狼群、船长派活）——待 explore 后立项
 
 远期见 `docs/DESIGN.md`「路线图」：养殖、团队管理（队员性格荒诞化）、NPC 村民 AI、多据点等。
 
@@ -136,14 +136,17 @@ v0.4 已完成（小步推进 + 自动回归）：S1 技能框架 → S2 技能�
 bash scripts/regress.sh
 ```
 
-覆盖（10 步）：类型检查 → 生产构建 → 产物断言 → 存档迁移 → 技能数值 → 动态价格 → 修船主线 → headless 整局模拟（剥离图形）→ 冒烟 → 黑盒。
+并行调度：tsc → 构建 → 产物三步串行；随后白盒 5 项 + 冒烟 + 黑盒 + OpenSpec 规格 lint **8 个进程并行**。黑盒内部 20 组再按 **并发 4 × turbo ×8** 跑——原先"约 20 分钟"的元凶是 headless 软渲染帧率低把游戏时间钳慢 + 失败级联空烧超时，提速体系落地后目标 **≈3 分钟**（失败一个断言的代价从分钟级降到秒级：面板断言全部轮询化、长 sleep 随 turbo 缩放 40%）。环境抖动防护：单组页面打开超时自动整组重开一次（close 限时 8 秒防僵尸页挂死）；headless chromium 整体崩溃时自动重启浏览器续跑剩余组——历史上这两类抖动都曾把「一组慢」放大成「几十分钟连坐全灭」。
+
+可调环境变量：`WL_TURBO`（黑盒时间倍率，默认 8）、`WL_CONCURRENCY`（黑盒并发组数，默认 4）、`WL_ONLY=G1,G5`（按组过滤，调试用）。
 
 | 层 | 脚本 | 说明 |
 | --- | --- | --- |
-| 冒烟 | `scripts/smoke.mjs` | 22 项：页面装载、canvas、HUD 骨架、六面板初始关闭、开局资源、零 console error |
-| 黑盒 | `scripts/e2e-blackbox.mjs` | 19 组 104 项：点选/框选/移动/采集（树木·岩石）/背包满拒绝/交易/面板互斥/存档读档/导入导出/招募/播种建造/背包转移/Shift 多选/稳定性/修船通关/进食/战斗/调试钩子；headless Chromium 驱动真实页面 |
-| 白盒 | `scripts/{skills,price,ship,migrate}-check.mjs` | 68 项数值/迁移单元断言 |
-| 集成 | `scripts/sim-run.mjs` | 13 组整局模拟（seed=42），剥离图形用 node 跑完整玩法 |
+| 冒烟 | `scripts/smoke.mjs` | 22 项：页面装载、canvas、HUD 骨架、六面板初始关闭、单人开局资源、零 console error |
+| 黑盒 | `scripts/e2e-blackbox.mjs` | 20 组 ≈115 项：点选/框选/移动/采集（树木·岩石）/背包满拒绝/交易/面板互斥/存档读档/导入导出/**招募条件门（拒绝+达成两段）**/播种建造/背包转移/Shift 多选/稳定性/修船通关/进食/战斗/调试钩子/**角色AI（闲时自治/发呆/当前行为文案/话痨吐槽）**；headless Chromium 驱动真实页面，组间并发 |
+| 白盒 | `scripts/{skills,price,ship,migrate}-check.mjs` | 迁移 22（含 v1→v5 链路与性格补齐）+ 技能 24 + 价格 17 + 修船 9 项数值/迁移单元断言 |
+| 集成 | `scripts/sim-run.mjs` | 16 组整局模拟 163 断言（seed=42；「16 · 角色AI」组性格显式注入，老组以中性性格基线隔离），剥离图形用 node 跑完整玩法；默认单人开局，多人场景显式 `world(42, 3)` |
+| 规格 lint | `openspec validate --all --strict` | 11 活规格 + 在途 change 的结构/场景完整性校验（MODIFIED 不得丢场景、Purpose 长度等），秒级 |
 
 黑盒依赖 `playwright`（headless chromium），首次运行前执行：
 
@@ -151,20 +154,24 @@ bash scripts/regress.sh
 npm i -D playwright && npx playwright install chromium-headless-shell
 ```
 
-## Spec Kit（规格驱动开发）
+## OpenSpec（规格驱动开发）
 
-本项目已接入 [GitHub Spec Kit](https://github.com/github/spec-kit)，采用 generic 集成。新功能开发走「需求 → 方案 → 任务 → 实现」的结构化流程：
+本项目使用 [OpenSpec](https://github.com/Fission-AI/OpenSpec)（`@fission-ai/openspec`，DSH 原生适配器）管理"先对齐、再动手"的功能开发。理念：fluid not rigid、为 brownfield 而生——每个功能是一个 **change** 文件夹（proposal / specs delta / design / tasks），实施完成后 **archive**，delta 自动合并进 `openspec/specs/` 的**活规格**（当前行为唯一真相）。
 
-| 命令 | 作用 |
+| DSH 技能（`.dsh/skills/`，`openspec init` 生成） | 作用 |
 | --- | --- |
-| `/speckit.specify <功能描述>` | 写需求规格（WHAT/WHY，不写实现） |
-| `/speckit.plan` | 基于 spec 出技术方案 |
-| `/speckit.tasks` | 把方案拆成可执行任务列表 |
-| `/speckit.implement` | 按任务列表写代码 |
-| `/speckit.clarify` | 澄清规格中的模糊点 |
-| `/speckit.analyze` | 校验 spec / plan / tasks 一致性 |
-| `/speckit.converge` | 对照代码库，把剩余差距补成任务 |
+| `openspec-explore` | 思考伙伴：读代码、比方案、成形再立项 |
+| `openspec-propose <想做什么>` | 一步生成 change 全套规划产物（只写规划不动代码） |
+| `openspec-update-change` | 修订既有 change 的产物并保持互相一致 |
+| `openspec-apply-change` | 按 tasks.md 实施（需另起一轮明确授权） |
+| `openspec-sync-specs` | 不归档、仅把 delta 同步进主规格 |
+| `openspec-archive-change` | 实施完成后归档并合并活规格 |
 
-- 每个功能的产物放在 `specs/NNN-功能名/` 下（`spec.md` / `plan.md` / `tasks.md`）。
-- 项目治理原则见 `.specify/memory/constitution.md`。
-- 命令模板在 `.specify/commands/`，核心模板在 `.specify/templates/`。
+结构与规则：
+
+- `openspec/specs/` 11 项能力为**当前实现的行为契约**（party 单人开局+招募条件门 / unit-control 选择模式命令 / resource-gathering / farming-construction / inventory-economy / combat-daynight / progression / saves / ship-quest / sim-layer / hud）。
+- `openspec/changes/` 5 项在途：`character-ai`（角色 AI 行为层，**已实施待归档**）、`death-system`（死亡与传承，v6 存档）、`medical-limbs`、`animal-husbandry`、`sim-frontend-unify`（前端接 sim，零行为变更）。
+- 产物中文书写、结构约定词英文；项目约束与验收门槛写在 `openspec/config.yaml`（规则纯逻辑进 systems/sim 共用、数值单一来源 config.ts、行为变更必须同步 sim 断言 + 黑盒场景）。
+- 规格 lint 已挂进 `bash scripts/regress.sh`（`openspec validate --all --strict`，秒级）。
+- 遥测默认关闭：脚本内统一 `OPENSPEC_TELEMETRY=0`。
+- **历史**：原 GitHub Spec Kit 集成（`specs/001-011`、`.specify/` 含 constitution.md）已冻结归档至 `docs/legacy-speckit/`，其中未实现的规格（011 角色 AI 等）已按 OpenSpec 格式迁入 `openspec/changes/`；治理原则以 `docs/legacy-speckit/.specify/memory/constitution.md` 留档，核心条款已并入 `openspec/config.yaml` context。
