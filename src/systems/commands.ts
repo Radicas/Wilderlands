@@ -4,7 +4,7 @@
  * 数字键 1-4 切换 探索/播种/围栏/木屋 模式（v0.1 模式条，v0.2 一度丢失，已恢复）。
  */
 import * as THREE from 'three';
-import { CFG } from '../config';
+import { CFG, TREES } from '../config';
 import type { BerryEnt, RockEnt, Tile, TreeEnt, Unit, WandererEnt } from '../types';
 import { buildings, gold, interMeshes, logMsg, merchantPos, modeNow, players, selected, selectableMeshes, trySpendGold } from '../state';
 import { tileAt } from '../core/world';
@@ -198,6 +198,10 @@ export function commandAt(ndc: THREE.Vector2): void {
     }
     if (ent && ent.kind === 'tree' && ent.ent.alive) {
       const t = ent.ent as TreeEnt;
+      if (t.phase !== 'mature') {
+        logMsg(TREES[t.species].name + (t.phase === 'sprout' ? '·幼苗' : '·小树') + '还太小，等它长成再砍吧');
+        return;
+      }
       // 围绕树站位
       const points = assignFormationPoints(t.p, selected.length, 1.5);
       selected.forEach((u, i) => {
@@ -207,7 +211,7 @@ export function commandAt(ndc: THREE.Vector2): void {
           target: t,
           pos: points[i].clone(),
           workT: 0,
-          workDur: 2.2,
+          workDur: TREES[t.species].workDur,
         };
       });
       return;

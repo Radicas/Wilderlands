@@ -3,11 +3,11 @@
  * 野狼 AI（追击/攻击/游荡）、刷怪节奏、资源重生。
  */
 import * as THREE from 'three';
-import { CFG, WORLD } from '../config';
+import { CFG, TREE_STUMP, TREES, WORLD } from '../config';
 import type { Unit } from '../types';
 import { berries, interMeshes, logMsg, players, rocks, timeOfDay, trees, wanderer, wolves } from '../state';
 import { scene } from '../core/renderer';
-import { tileAt } from '../core/world';
+import { applyTreePhase, tileAt } from '../core/world';
 import { PioneerUnit } from '../entities/unit';
 
 export function spawnWolf(): void {
@@ -115,13 +115,26 @@ export function updateWolves(dt: number): void {
 }
 
 export function updateWorld(dt: number): void {
-  // 资源重生
+  // 资源重生（forest-life D5：树走三阶段生长机，矿/果维持整存整取）
   for (const tree of trees) {
-    if (!tree.alive) {
+    if (tree.phase !== 'mature') {
       tree.respawn -= dt;
       if (tree.respawn <= 0) {
-        tree.alive = true;
-        tree.mesh.visible = true;
+        const dur = (TREES[tree.species].toMature - TREE_STUMP) / 2;
+        if (tree.phase === 'stump') {
+          tree.phase = 'sprout';
+          tree.alive = true;
+          tree.respawn = dur;
+          tree.mesh.visible = true; // bindVisible 写回幼苗矩阵
+        } else if (tree.phase === 'sprout') {
+          tree.phase = 'young';
+          tree.respawn = dur;
+          applyTreePhase(tree);
+        } else {
+          tree.phase = 'mature';
+          tree.respawn = 0;
+          applyTreePhase(tree);
+        }
       }
     }
   }

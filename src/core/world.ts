@@ -4,8 +4,9 @@
  * 纯地形函数（噪声/地面高度）单一权威在 ../sim/terrain.ts，这里 re-export。
  */
 import * as THREE from 'three';
-import { CFG, PALETTE, SCENE, WORLD, WANDERER_NAMES } from '../config';
-import type { BerryEnt, RockEnt, Tile, TreeEnt, WandererEnt } from '../types';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { CFG, PALETTE, SCENE, TREE_STAGE_SCALE, WORLD, WANDERER_NAMES } from '../config';
+import type { BerryEnt, RockEnt, Tile, TreeEnt, TreeMats, WandererEnt } from '../types';
 import { berries, interMeshes, merchantPos, rocks, setWanderer, shop, tiles, trees } from '../state';
 import { scene } from './renderer';
 import { TILE, GRID, noise2D, groundHeightAt } from '../sim/terrain';
@@ -107,41 +108,84 @@ export function tileAt(x: number, z: number): Tile | undefined {
   );
 }
 
-// ---- 松树（InstancedMesh：220 棵树共用 2 个 draw call）----
-const treeGeo = new THREE.ConeGeometry(SCENE.treeCrownR, SCENE.treeCrownH, 6);
-const treeMat = new THREE.MeshLambertMaterial({ color: PALETTE.treeCrown });
-const trunkGeo = new THREE.CylinderGeometry(SCENE.treeTrunkRt, SCENE.treeTrunkRb, SCENE.treeTrunkH, 5);
-const trunkMat = new THREE.MeshLambertMaterial({ color: PALETTE.treeTrunk });
+// ---- 森林（多树种 InstancedMesh：每树种干/冠各 1 批，共 6 draw call，forest-life）----
+interface SpeciesVisual {
+  trunkGeo: THREE.BufferGeometry; trunkMat: THREE.MeshLambertMaterial; trunkH: number;
+  crownGeo: THREE.BufferGeometry; crownMat: THREE.MeshLambertMaterial;
+  /** 成树冠中心离地高（阶段缩放锚定树根：y = 原偏移 × scale） */
+  crownY: number;
+}
 
-let trunkIM: THREE.InstancedMesh;
-let crownIM: THREE.InstancedMesh;
-/** 每棵树的原始 matrix（重生时恢复用），下标 = instanceId */
-const treeOriginals: { trunk: THREE.Matrix4; crown: THREE.Matrix4 }[] = [];
+const oakCrownGeo = mergeGeometries([
+  new THREE.SphereGeometry(1.0, 8, 6).translate(-0.45, 0.3, 0),
+  new THREE.SphereGeometry(0.78, 8, 6).translate(0.5, 0.55, 0.1),
+]) as THREE.BufferGeometry;
+
+const SPECIES_VISUALS: SpeciesVisual[] = [
+  { // 0 松树：现几何原样（回归锚）
+    trunkGeo: new THREE.CylinderGeometry(SCENE.treeTrunkRt, SCENE.treeTrunkRb, SCENE.treeTrunkH, 5),
+    trunkMat: new THREE.MeshLambertMaterial({ color: PALETTE.treeTrunk }), trunkH: SCENE.treeTrunkH,
+    crownGeo: new THREE.ConeGeometry(SCENE.treeCrownR, SCENE.treeCrownH, 6),
+    crownMat: new THREE.MeshLambertMaterial({ color: PALETTE.treeCrown }),
+    crownY: SCENE.treeTrunkH + SCENE.treeCrownH / 2 - 0.1,
+  },
+  { // 1 橡树：粗短干 + 双球叠冠
+    trunkGeo: new THREE.CylinderGeometry(0.3, 0.42, 1.0, 6),
+    trunkMat: new THREE.MeshLambertMaterial({ color: PALETTE.oakTrunk }), trunkH: 1.0,
+    crownGeo: oakCrownGeo,
+    crownMat: new THREE.MeshLambertMaterial({ color: PALETTE.oakCrown }),
+    crownY: 2.0,
+  },
+  { // 2 白桦：细高白干 + 小球冠
+    trunkGeo: new THREE.CylinderGeometry(0.1, 0.16, 2.5, 5),
+    trunkMat: new THREE.MeshLambertMaterial({ color: PALETTE.birchTrunk }), trunkH: 2.5,
+    crownGeo: new THREE.SphereGeometry(0.78, 7, 5),
+    crownMat: new THREE.MeshLambertMaterial({ color: PALETTE.birchCrown }),
+    crownY: 3.1,
+  },
+];
+
+interface TreeRig { trunkIM: THREE.InstancedMesh; crownIM: THREE.InstancedMesh }
+const treeRigs: TreeRig[] = [];
+/** 全局 trees[] 下标 ↔ 树种内 slot 双向：ent.slot 存于 TreeEnt，反查由 bySpecies 闭包 */
+const bySpecies: TreeEnt[][] = [[], [], []];
 
 const _dummy = new THREE.Object3D();
 
-/** 根据 instanceId 显隐一棵树（scale=0 即不可见，但保留 raycast 命中体积？不——scale=0 后 raycast 也命中不了，正确） */
+/** 写回当前阶段矩阵（换阶/显隐统一入口） */
+function writeTreeMat(tree: TreeEnt): void {
+  if (tree.phase === 'stump') return;
+  const rig = treeRigs[tree.species];
+  const m = tree.mats[tree.phase];
+  rig.trunkIM.setMatrixAt(tree.slot, m.trunk);
+  rig.crownIM.setMatrixAt(tree.slot, m.crown);
+  rig.trunkIM.instanceMatrix.needsUpdate = true;
+  rig.crownIM.instanceMatrix.needsUpdate = true;
+}
+
+/** 外部（生长阶段机）用：按当前 phase 恢复/更新实例矩阵 */
+export function applyTreePhase(tree: TreeEnt): void { writeTreeMat(tree); }
+
+/** 根据全局树号显隐一棵树（visible=false 进入消亡补间；true 写回当前阶段矩阵） */
 function applyTreeVisible(id: number, v: boolean): void {
-  const orig = treeOriginals[id];
-  if (!orig) return;
-  const di = dyingTrees.findIndex((d) => d.id === id);
+  const tree = trees[id];
+  if (!tree) return;
+  const di = dyingTrees.findIndex((d) => d.tree === tree);
   if (v) {
-    if (di >= 0) dyingTrees.splice(di, 1); // 重生打断补间
-    trunkIM.setMatrixAt(id, orig.trunk);
-    crownIM.setMatrixAt(id, orig.crown);
-    trunkIM.instanceMatrix.needsUpdate = true;
-    crownIM.instanceMatrix.needsUpdate = true;
-  } else if (di < 0) {
-    // 进入 0.4s 下沉缩小补间（gather-feedback），tickDeathAnims 落终态
-    dyingTrees.push({ id, t: 0, trunk: readTransform(orig.trunk), crown: readTransform(orig.crown) });
+    if (di >= 0) dyingTrees.splice(di, 1); // 新苗打断补间
+    if (tree.phase !== 'stump') writeTreeMat(tree);
+  } else if (di < 0 && tree.phase !== 'stump') {
+    // 进入 0.4s 下沉缩小补间（从当前阶段矩阵起步——砍小树也正确下沉）
+    const m = tree.mats[tree.phase];
+    dyingTrees.push({ tree, t: 0, trunk: readTransform(m.trunk), crown: readTransform(m.crown) });
   }
 }
 
-/** —— 消亡补间（change gather-feedback F3）：砍倒/采空 → 0.4 秒下沉缩小，替代瞬时"橡皮擦" —— */
+/** —— 消亡补间（gather-feedback F3，forest-life rig 化）：砍倒/采空 → 0.4 秒下沉缩小 —— */
 const DEATH_DUR = 0.4;
 
 interface DeadTransform { p: THREE.Vector3; q: THREE.Quaternion; s: THREE.Vector3 }
-interface DyingTree { id: number; t: number; trunk: DeadTransform; crown: DeadTransform }
+interface DyingTree { tree: TreeEnt; t: number; trunk: DeadTransform; crown: DeadTransform }
 interface DyingRock { id: number; t: number; tr: DeadTransform }
 
 const dyingTrees: DyingTree[] = [];
@@ -167,26 +211,27 @@ function readTransform(m: THREE.Matrix4): DeadTransform {
 
 /** 每帧由 stepGame 调用：推进补间，完成后落入地下终态 */
 export function tickDeathAnims(dt: number): void {
-  if (trunkIM) {
+  if (treeRigs.length) {
     let dirty = false;
     for (let i = dyingTrees.length - 1; i >= 0; i--) {
       const d = dyingTrees[i];
       d.t += dt;
       const k = Math.max(0, 1 - d.t / DEATH_DUR);
-      for (const [tr, im] of [[d.trunk, trunkIM], [d.crown, crownIM]] as [DeadTransform, THREE.InstancedMesh][]) {
+      const rig = treeRigs[d.tree.species];
+      for (const [tr, im] of [[d.trunk, rig.trunkIM], [d.crown, rig.crownIM]] as [DeadTransform, THREE.InstancedMesh][]) {
         _dp.copy(tr.p); _dp.y -= (1 - k) * 0.3;
         _ds.copy(tr.s).multiplyScalar(k);
         _dummy.position.copy(_dp); _dummy.quaternion.copy(tr.q); _dummy.scale.copy(_ds);
         _dummy.updateMatrix();
-        im.setMatrixAt(d.id, _dummy.matrix);
+        im.setMatrixAt(d.tree.slot, _dummy.matrix);
       }
       if (d.t >= DEATH_DUR) {
-        setInstanceUnder(trunkIM, d.id); setInstanceUnder(crownIM, d.id); // 地下深处终态，拾取彻底失效
+        setInstanceUnder(rig.trunkIM, d.tree.slot); setInstanceUnder(rig.crownIM, d.tree.slot); // 地下深处终态，拾取彻底失效
         dyingTrees.splice(i, 1);
       }
       dirty = true;
     }
-    if (dirty) { trunkIM.instanceMatrix.needsUpdate = true; crownIM.instanceMatrix.needsUpdate = true; }
+    if (dirty) for (const rig of treeRigs) { rig.trunkIM.instanceMatrix.needsUpdate = true; rig.crownIM.instanceMatrix.needsUpdate = true; }
   }
   if (rockIM) {
     let dirty = false;
@@ -222,59 +267,77 @@ function bindVisible(anchor: THREE.Object3D, id: number, apply: (id: number, v: 
 }
 
 export function buildTrees(): void {
-  // 先收集位置（避开家园格），再一次性填充 InstancedMesh
-  const spots: THREE.Vector3[] = [];
-  for (let i = 0; i < WORLD.treeCount; i++) {
+  // 1) 拒绝采样定植点：数量上限 treeCount、两树平面间距 ≥ treeMinGap（≤4×尝试后弃额）
+  const accepted: { p: THREE.Vector3; species: number }[] = [];
+  const SPECIES_MAP = [0, 0, 1, 2]; // i%4 → 松50/橡25/桦25（确定性，零额外随机流）
+  let tries = 0;
+  while (accepted.length < WORLD.treeCount && tries++ < WORLD.treeCount * 4) {
     const a = Math.random() * Math.PI * 2;
     const r = WORLD.homeRadius * TILE * 0.8 + Math.random() * (WORLD.grid * TILE * 0.45);
     const px = Math.cos(a) * r;
     const pz = Math.sin(a) * r;
     const t = tileAt(px, pz);
     if (t && t.isHome) continue;
-    spots.push(new THREE.Vector3(px, groundHeightAt(px, pz), pz));
+    if (accepted.some((s) => Math.hypot(s.p.x - px, s.p.z - pz) < WORLD.treeMinGap)) continue;
+    accepted.push({ p: new THREE.Vector3(px, groundHeightAt(px, pz), pz), species: SPECIES_MAP[accepted.length % 4] });
   }
 
-  const n = spots.length;
-  trunkIM = new THREE.InstancedMesh(trunkGeo, trunkMat, n);
-  crownIM = new THREE.InstancedMesh(treeGeo, treeMat, n);
-  trunkIM.castShadow = true;
-  crownIM.castShadow = true;
+  // 2) 每树种一套 IM 对 + 全局 trees[] 与 bySpecies[slot] 双向挂接
+  const counts = [0, 0, 0];
+  accepted.forEach((s) => counts[s.species]++);
+  SPECIES_VISUALS.forEach((v, s) => {
+    const trunkIM = new THREE.InstancedMesh(v.trunkGeo, v.trunkMat, counts[s]);
+    const crownIM = new THREE.InstancedMesh(v.crownGeo, v.crownMat, counts[s]);
+    trunkIM.castShadow = true;
+    crownIM.castShadow = true;
+    treeRigs[s] = { trunkIM, crownIM };
+    bySpecies[s] = [];
+    // instanceId（树种内 slot）→ 树实体反查
+    crownIM.userData.resolveInstance = (id: number) => ({ kind: 'tree', ent: bySpecies[s][id] });
+    trunkIM.userData.resolveInstance = (id: number) => ({ kind: 'tree', ent: bySpecies[s][id] });
+    interMeshes.push(trunkIM, crownIM);
+  });
 
-  spots.forEach((p, i) => {
-    // trunk：几何中心半高 → 底部接地（尺寸见 config.SCENE）
-    _dummy.position.set(p.x, p.y + SCENE.treeTrunkH / 2, p.z);
-    _dummy.rotation.set(0, 0, 0);
-    _dummy.scale.set(1, 1, 1);
-    _dummy.updateMatrix();
-    trunkIM.setMatrixAt(i, _dummy.matrix);
-    const trunkOrig = _dummy.matrix.clone();
+  accepted.forEach((sp) => {
+    const v = SPECIES_VISUALS[sp.species];
+    const p = sp.p;
+    const ry = Math.random() * Math.PI * 2; // 冠向随机（视觉抖动，非生态随机流）
 
-    // crown：压干顶略咬合，随机绕 Y 旋转
-    _dummy.position.set(p.x, p.y + SCENE.treeTrunkH + SCENE.treeCrownH / 2 - 0.1, p.z);
-    _dummy.rotation.set(0, Math.random() * Math.PI * 2, 0);
-    _dummy.scale.set(1, 1, 1);
-    _dummy.updateMatrix();
-    crownIM.setMatrixAt(i, _dummy.matrix);
-    const crownOrig = _dummy.matrix.clone();
+    // 阶段矩阵预计算：锚定树根等比缩放（D6），换阶 O(1) 拷贝
+    const mats = {} as TreeMats;
+    const keys = ['sprout', 'young', 'mature'] as const;
+    keys.forEach((k, ki) => {
+      const s = TREE_STAGE_SCALE[ki];
+      _dummy.position.set(p.x, p.y + (v.trunkH * s) / 2, p.z);
+      _dummy.rotation.set(0, 0, 0);
+      _dummy.scale.set(s, s, s);
+      _dummy.updateMatrix();
+      const trunk = _dummy.matrix.clone();
+      _dummy.position.set(p.x, p.y + v.crownY * s, p.z);
+      _dummy.rotation.set(0, ry, 0);
+      _dummy.updateMatrix();
+      mats[k] = { trunk, crown: _dummy.matrix.clone() };
+    });
 
-    treeOriginals.push({ trunk: trunkOrig, crown: crownOrig });
+    const rig = treeRigs[sp.species];
+    const slot = bySpecies[sp.species].length;
+    rig.trunkIM.setMatrixAt(slot, mats.mature.trunk);
+    rig.crownIM.setMatrixAt(slot, mats.mature.crown);
 
     const anchor = new THREE.Object3D();
     anchor.position.copy(p);
-    bindVisible(anchor, i, applyTreeVisible);
+    bindVisible(anchor, trees.length, applyTreeVisible);
 
-    trees.push({ p, mesh: anchor, alive: true, respawn: 0 });
+    const tree: TreeEnt = { p, mesh: anchor, alive: true, respawn: 0, species: sp.species, slot, phase: 'mature', mats };
+    bySpecies[sp.species].push(tree);
+    trees.push(tree);
   });
 
-  trunkIM.instanceMatrix.needsUpdate = true;
-  crownIM.instanceMatrix.needsUpdate = true;
-  scene.add(trunkIM, crownIM);
-
-  // raycast 命中这两个 IM 时，按 instanceId 反查树实体
-  const resolveTree = (id: number) => ({ kind: 'tree', ent: trees[id] });
-  trunkIM.userData.resolveInstance = resolveTree;
-  crownIM.userData.resolveInstance = resolveTree;
-  interMeshes.push(trunkIM, crownIM);
+  for (const rig of treeRigs) {
+    rig.trunkIM.instanceMatrix.needsUpdate = true;
+    rig.crownIM.instanceMatrix.needsUpdate = true;
+    scene.add(rig.trunkIM, rig.crownIM);
+  }
 }
 
 // ---- 岩脉（InstancedMesh：90 块石头共用 1 个 draw call）----

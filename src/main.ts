@@ -177,7 +177,7 @@ initFloaters();
   },
   get targets() {
     return {
-      trees: trees.filter((t) => t.alive).map((t) => ({ x: t.p.x, y: t.p.y, z: t.p.z })),
+      trees: trees.filter((t) => t.alive).map((t) => ({ x: t.p.x, y: t.p.y, z: t.p.z, species: t.species, phase: t.phase })),
       rocks: rocks.filter((r) => r.alive).map((r) => ({ x: r.p.x, y: r.p.y, z: r.p.z })),
       berries: berries.filter((b) => b.alive).map((b) => ({ x: b.p.x, y: b.p.y, z: b.p.z })),
       merchant: { x: merchantPos.x, z: merchantPos.z },

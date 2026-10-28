@@ -2,7 +2,7 @@
  * Wilderlands · 悬停提示
  * 鼠标指到实体时显示"这是什么、能干嘛"。
  */
-import { CFG } from '../config';
+import { CFG, TREES } from '../config';
 import { interMeshes, selectableMeshes } from '../state';
 import { camera } from '../core/renderer';
 import { raycaster, toNDC, rayGround, pickBest } from '../systems/commands';
@@ -31,7 +31,16 @@ export function updateHover(x: number, y: number): void {
     const hits = raycaster.intersectObjects(interMeshes, false);
     const ent = pickBest(hits);
     if (ent) {
-      if (ent.kind === 'tree') txt = ent.ent?.alive ? '松树 · 右键砍伐得木材' : '树桩 · 待重生';
+      if (ent.kind === 'tree') {
+        const tr = ent.ent;
+        txt = tr
+          ? !tr.alive
+            ? '树桩 · 不久会再冒新芽'
+            : tr.phase === 'mature'
+              ? TREES[tr.species].name + ' · 右键砍伐得木材'
+              : TREES[tr.species].name + '·' + (tr.phase === 'sprout' ? '幼苗' : '小树') + ' · 还太小'
+          : '';
+      }
       else if (ent.kind === 'rock') txt = ent.ent?.alive ? '岩石 · 右键开采得石头' : '矿脉 · 待重生';
       else if (ent.kind === 'berry') txt = ent.ent?.alive ? '浆果丛 · 右键采集得食物' : '浆果丛 · 采空了';
       else if (ent.kind === 'wolf') txt = ent.ent?.dead ? '' : '野狼 · 危险！右键攻击';

@@ -5,7 +5,7 @@
  * 不含 mesh、动画、场景、DOM——node 可直接运行。
  * 规则对照：specs/008-headless-sim/spec.md §3（防漂移）。
  */
-import { CFG } from '../config';
+import { CFG, TREE_STUMP, TREES } from '../config';
 import type { Inventory, Skills } from '../types';
 import { groundHeightAt } from './terrain';
 import type { SimGatherKind, SimLimbs, SimTask, SimUnitState, SimWorld } from './types';
@@ -238,7 +238,7 @@ export class SimUnit implements SimUnitState {
   private _tryIdleWork(world: SimWorld): void {
     if (invRatio(this) >= 1) return;
     const targets: IdleTarget[] = [];
-    for (const t of world.trees) if (t.alive) targets.push({ kind: 'tree', x: t.x, z: t.z });
+    for (const t of world.trees) if (t.alive && t.phase === 'mature') targets.push({ kind: 'tree', x: t.x, z: t.z }); // 幼树免砍门（同前端）
     for (const r of world.rocks) if (r.alive) targets.push({ kind: 'rock', x: r.x, z: r.z });
     for (const b of world.berries) if (b.alive) targets.push({ kind: 'berry', x: b.x, z: b.z });
     const leader = world.players.find((p) => !p.down && !p.dead) ?? this;
@@ -340,18 +340,20 @@ export class SimUnit implements SimUnitState {
     gainAttrXp(this, 'staminaXp', 1);
     if (kind === 'tree') {
       const tree = world.trees[t.target ?? -1];
-      if (!tree || !tree.alive) { this.task = null; return; }
-      if (!invCanAdd(this, 'wood', CFG.woodPerTree)) {
+      if (!tree || !tree.alive || tree.phase !== 'mature') { this.task = null; return; } // 非成树不可结算（免砍门）
+      const sp = TREES[tree.species];
+      if (!invCanAdd(this, 'wood', sp.wood)) {
         logMsg(this.name + ' 背包已满，放不下更多木材');
         this.task = null;
         return;
       }
-      invAdd(this, 'wood', CFG.woodPerTree);
+      invAdd(this, 'wood', sp.wood);
       tree.alive = false;
-      tree.respawn = 45;
+      tree.phase = 'stump';
+      tree.respawn = TREE_STUMP;
       gainSkill(this, 'gather', 1);
       refreshCapacity(this); // 采集升级 → 负重立即 +4
-      logMsg('砍倒树木，木材 +' + CFG.woodPerTree);
+      logMsg('砍倒' + sp.name + '，木材 +' + sp.wood);
       this._cancelSameTarget(world, 'gather', t.target);
     } else if (kind === 'rock') {
       const rock = world.rocks[t.target ?? -1];

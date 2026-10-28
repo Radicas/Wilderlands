@@ -4,7 +4,7 @@
  * v0.2: 低多边形分段模型 + 程序化动画
  */
 import * as THREE from 'three';
-import { ANIM, CFG, ITEMS, PALETTE, START_INV, START_PARTY, UNIT_NAMES } from '../config';
+import { ANIM, CFG, TREE_STUMP, TREES, ITEMS, PALETTE, START_INV, START_PARTY, UNIT_NAMES } from '../config';
 import type { AnimState, BerryEnt, Inventory, LimbRefs, Personality, Mood, RockEnt, Tile, TreeEnt, Unit, UnitRole, UnitTask } from '../types';
 import { rollPersonality, findIdleWork, decideWolfReaction, speedMoodMultiplier, workMoodMultiplier, moodStep, MOOD_LOG, QUIPS_WORK, QUIPS_WOLF, QUIPS_NIGHT, QUIP_HUNGER, type IdleTarget, type WolfReaction } from '../systems/personality';
 import { buildings, gainFx, interMeshes, logMsg, merchantPos, players, rocks, berries, removeSelected, selected, selectableMeshes, timeOfDay, trees, wolves } from '../state';
@@ -638,7 +638,7 @@ export class PioneerUnit implements Unit {
     if (invRatio(this) >= 1) return; // 背包满了不找活
     const leader = selected[0] ?? this;
     const targets: IdleTarget[] = [];
-    for (const t of trees) if (t.alive) targets.push({ kind: 'tree', x: t.p.x, z: t.p.z });
+    for (const t of trees) if (t.alive && t.phase === 'mature') targets.push({ kind: 'tree', x: t.p.x, z: t.p.z }); // 幼树不入自治候选（免砍门 D8）
     for (const r of rocks) if (r.alive) targets.push({ kind: 'rock', x: r.p.x, z: r.p.z });
     for (const b of berries) if (b.alive) targets.push({ kind: 'berry', x: b.p.x, z: b.p.z });
     const found = findIdleWork(this.personality.work, leader.pos.x, leader.pos.z, targets, CFG.idleScanRadius);
@@ -758,19 +758,21 @@ export class PioneerUnit implements Unit {
     if (t.kind === 'tree') {
       const tree = t.target as TreeEnt;
       // 背包装不下就不砍，资源保留在原位
-      if (!invCanAdd(this, 'wood', CFG.woodPerTree)) {
+      const sp = TREES[tree.species];
+      if (!invCanAdd(this, 'wood', sp.wood)) {
         logMsg(this.name + ' 背包已满，放不下更多木材');
         this.task = null;
         return;
       }
-      invAdd(this, 'wood', CFG.woodPerTree);
+      invAdd(this, 'wood', sp.wood);
       tree.alive = false;
-      tree.respawn = 45;
-      tree.mesh.visible = false;
+      tree.mesh.visible = false; // 消亡补间须先于阶段写入（从当前阶段矩阵起步，forest-life）
+      tree.phase = 'stump';
+      tree.respawn = TREE_STUMP;
       gainSkill(this, 'gather', 1);
       refreshCapacity(this); // 采集升级 → 负重立即 +4（修复：游戏中升级即时生效）
-      logMsg('砍倒树木，木材 +' + CFG.woodPerTree);
-      gainFx.push({ x: this.pos.x, y: 2.05, z: this.pos.z, text: '+' + CFG.woodPerTree + ' 木材', color: '#d9b06a' });
+      logMsg('砍倒' + sp.name + '，木材 +' + sp.wood);
+      gainFx.push({ x: this.pos.x, y: 2.05, z: this.pos.z, text: '+' + sp.wood + ' 木材', color: '#d9b06a' });
       // 取消所有正在采这棵树的角色任务
       for (const u of [...players, ...wolves]) {
         if (u.task?.type === 'gather' && u.task.target === tree) {

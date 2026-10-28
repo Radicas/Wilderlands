@@ -62,7 +62,12 @@ export interface SimTree {
   x: number;
   z: number;
   alive: boolean;
+  /** 当前阶段倒计时（stump/sprout/young 复用，同前端 respawn 语义） */
   respawn: number;
+  /** 树种 index（TREES 表，i%4 确定性映射） */
+  species: number;
+  /** 生长阶段（与前端 TreePhase 同枚举） */
+  phase: 'stump' | 'sprout' | 'young' | 'mature';
 }
 
 export interface SimRock {

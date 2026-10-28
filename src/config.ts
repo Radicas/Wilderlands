@@ -130,7 +130,9 @@ export const WORLD = {
   grid: 48,          // 地块数（边长）
   homeRadius: 10,    // 家园区半径（格）
   wildRadius: 16,    // 野地区半径（格）
-  treeCount: 220,
+  treeCount: 150,
+  /** 任意两树最小平面间距（m）：拒绝采样（forest-life D4，疏林） */
+  treeMinGap: 3.2,
   rockCount: 90,
   terrainAmp: 1.2,   // 地形起伏幅度（米）
   terrainFreq: 0.35, // 地形噪声频率
@@ -164,6 +166,18 @@ export const START_GOLD = 20;
 
 /** 每名拓荒者初始背包（招募的第 4 人空背包） */
 // —— 场景几何（视觉比例单一来源）：角色身高 ≈1.78，树 ≈2.7 倍人高，石 ≈1.9m 巨石 ——
+/** 树种生态表（forest-life D1）：产量/工时/成材总时长（含树桩期）单一来源。
+ *  index 即 species：0 松（回归锚，与旧版数值全等）/ 1 橡（慢工粗木）/ 2 桦（快长薄产） */
+export const TREES = [
+  { key: 'pine', name: '松树', wood: 3, workDur: 2.2, toMature: 45 },
+  { key: 'oak', name: '橡树', wood: 4, workDur: 2.8, toMature: 60 },
+  { key: 'birch', name: '白桦', wood: 2, workDur: 1.8, toMature: 30 },
+] as const;
+/** 砍倒后的空窗（树桩）时长：其后幼苗→小树两级均分剩余成材时间 */
+export const TREE_STUMP = 15;
+/** 阶段视觉缩放：幼苗 / 小树 / 成树（锚点在树根，整体等比） */
+export const TREE_STAGE_SCALE = [0.22, 0.55, 1] as const;
+
 export const SCENE = {
   treeCrownR: 1.1,   // 树冠锥体底半径
   treeCrownH: 3.6,   // 树冠锥体高
@@ -186,6 +200,10 @@ export const PALETTE = {
   tileMature: 0xd0a840,
   ear: 0xffd94a,
   treeCrown: 0x2f6b2f,
+  oakCrown: 0x40762f,
+  oakTrunk: 0x57432e,
+  birchCrown: 0x67a24a,
+  birchTrunk: 0xded9c8,
   treeTrunk: 0x5a3a22,
   rock: 0x7a7a88,
   fence: 0xb08a50,

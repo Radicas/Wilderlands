@@ -4,10 +4,10 @@
  * simTick：每帧推进——时间/玩家任务/野狼 AI/资源重生/刷狼/农场生长/价格。
  * 无 three/DOM 依赖，node 可直接运行（spec 008）。
  */
-import { CFG, START_GOLD, START_INV, START_PARTY, UNIT_NAMES, WANDERER_NAMES, WORLD } from '../config';
+import { CFG, START_GOLD, START_INV, START_PARTY, TREE_STUMP, TREES, UNIT_NAMES, WANDERER_NAMES, WORLD } from '../config';
 import { recruitBlockers } from '../systems/recruit';
 import { rollPersonality } from '../systems/personality';
-export { CFG };
+export { CFG, TREES, TREE_STUMP };
 export { setLogHandler } from '../systems/log';
 export { transferItem } from '../systems/inventory';
 import { Rng } from './rng';
@@ -78,15 +78,20 @@ export function createSimWorld(seed = 1, party: number = START_PARTY): SimWorld 
   // 野狼 3 头
   for (let i = 0; i < 3; i++) spawnWolf(w);
 
-  // 松树（规则同 world.buildTrees：园区外，r = 16 + rand*43.2）
-  for (let i = 0; i < WORLD.treeCount; i++) {
-    const a = rng.angle();
-    const r = WORLD.homeRadius * TILE * 0.8 + rng.next() * (WORLD.grid * TILE * 0.45);
-    const px = Math.cos(a) * r;
-    const pz = Math.sin(a) * r;
-    const t = tileAtIn(w, px, pz);
-    if (t && t.isHome) continue;
-    w.trees.push({ x: px, z: pz, alive: true, respawn: 0 });
+  // 森林（规则同 world.buildTrees：园区外、treeMinGap 拒绝采样、i%4 物种映射——forest-life 双轨镜像）
+  {
+    const SPECIES_MAP = [0, 0, 1, 2];
+    let tries = 0;
+    while (w.trees.length < WORLD.treeCount && tries++ < WORLD.treeCount * 4) {
+      const a = rng.angle();
+      const r = WORLD.homeRadius * TILE * 0.8 + rng.next() * (WORLD.grid * TILE * 0.45);
+      const px = Math.cos(a) * r;
+      const pz = Math.sin(a) * r;
+      const t = tileAtIn(w, px, pz);
+      if (t && t.isHome) continue;
+      if (w.trees.some((tr) => Math.hypot(tr.x - px, tr.z - pz) < WORLD.treeMinGap)) continue;
+      w.trees.push({ x: px, z: pz, alive: true, respawn: 0, species: SPECIES_MAP[w.trees.length % 4], phase: 'mature' });
+    }
   }
 
   // 岩脉（规则同 world.buildRocks：r = 22.4 + rand*33.6）
@@ -153,11 +158,11 @@ export function simMove(w: SimWorld, u: SimUnit, x: number, z: number): void {
 
 export function simGatherTree(w: SimWorld, u: SimUnit, idx: number): void {
   const tree = w.trees[idx];
-  if (!tree || !tree.alive) { logMsg('那棵树已经没了'); return; }
+  if (!tree || !tree.alive || tree.phase !== 'mature') { logMsg('那棵树已经没了'); return; } // 免砍门（forest-life）
   const dx = tree.x - u.x;
   const dz = tree.z - u.z;
   const d = Math.hypot(dx, dz) || 1;
-  u.task = { type: 'gather', kind: 'tree', target: idx, pos: { x: tree.x - (dx / d) * 1.5, z: tree.z - (dz / d) * 1.5 }, workT: 0, workDur: 2.2 };
+  u.task = { type: 'gather', kind: 'tree', target: idx, pos: { x: tree.x - (dx / d) * 1.5, z: tree.z - (dz / d) * 1.5 }, workT: 0, workDur: TREES[tree.species].workDur };
   logMsg(u.name + ' 去砍树 #' + idx);
 }
 
@@ -421,11 +426,16 @@ export function simTick(w: SimWorld, dt: number): void {
     }
   }
 
-  // —— 资源重生（规则同 combat.updateWorld） ——
+  // —— 资源重生（规则同 combat.updateWorld：树走 stump→sprout→young→mature 阶段机） ——
   for (const tree of w.trees) {
-    if (!tree.alive) {
+    if (tree.phase !== 'mature') {
       tree.respawn -= dt;
-      if (tree.respawn <= 0) tree.alive = true;
+      if (tree.respawn <= 0) {
+        const dur = (TREES[tree.species].toMature - TREE_STUMP) / 2;
+        if (tree.phase === 'stump') { tree.phase = 'sprout'; tree.alive = true; tree.respawn = dur; }
+        else if (tree.phase === 'sprout') { tree.phase = 'young'; tree.respawn = dur; }
+        else { tree.phase = 'mature'; tree.respawn = 0; }
+      }
     }
   }
   for (const rock of w.rocks) {

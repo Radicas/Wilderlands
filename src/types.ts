@@ -98,12 +98,29 @@ export interface Tile {
   ear: THREE.Mesh;
 }
 
+export type TreePhase = 'stump' | 'sprout' | 'young' | 'mature';
+
+/** 各阶段实例矩阵（build 期预计算，换阶 O(1) 拷贝——forest-life D6） */
+export interface TreeMats {
+  sprout: { trunk: THREE.Matrix4; crown: THREE.Matrix4 };
+  young: { trunk: THREE.Matrix4; crown: THREE.Matrix4 };
+  mature: { trunk: THREE.Matrix4; crown: THREE.Matrix4 };
+}
+
 export interface TreeEnt {
   p: THREE.Vector3;
   /** 逻辑锚点（InstancedMesh 化后不再是真实 Group，visible 变更会驱动 instance matrix） */
   mesh: THREE.Object3D;
+  /** 等价 phase !== 'stump'（D7：计数/拾取/建造避让沿用） */
   alive: boolean;
+  /** 复用为当前阶段倒计时（stump 空窗 / sprout / young 逐段） */
   respawn: number;
+  /** 树种 index（TREES 表） */
+  species: number;
+  /** 该树种 InstancedMesh 对内的实例序号 */
+  slot: number;
+  phase: TreePhase;
+  mats: TreeMats;
 }
 
 export interface RockEnt {
