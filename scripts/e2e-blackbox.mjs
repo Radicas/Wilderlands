@@ -92,17 +92,18 @@ async function findClearSpot(page, cx, cz, radius = 12) {
 
 /** 左键点选某个角色（按索引）；多高度重试，失败返回 false */
 async function clickUnit(page, idx) {
-  const units = await page.evaluate(() => window.__GAME__.units);
-  const u = units[idx];
-  for (const h of [1.0, 1.4, 1.8]) {
-    const s = await sp(page, u.x, u.z, h);
-    if (!s || !(await onCanvas(page, s.x, s.y))) continue;
-    await page.mouse.click(s.x, s.y);
-    await sleep(300);
-    const sel = await page.evaluate(() => window.__GAME__.units.filter((x) => x.selected).length);
-    if (sel > 0) return true;
-  }
-  return false;
+  // 页内同帧投影+派发（低帧率下 node 往返会被相机 lerp 插队造成漂移 miss——G21/G22 选中 flake 元凶）
+  return page.evaluate((i) => {
+    const g = window.__GAME__;
+    const u = g.units[i];
+    if (!u) return false;
+    for (const h of [1.0, 1.4, 1.8]) {
+      if (g.leftClickWorld(u.x, u.z, h)) {
+        if (g.units.filter((x2) => x2.selected).length > 0) return true;
+      }
+    }
+    return g.units.filter((x2) => x2.selected).length > 0;
+  }, idx);
 }
 
 /** 该屏幕点是否落在 canvas（排除 HUD/面板遮挡） */
@@ -150,7 +151,8 @@ async function placeUnit(page, x, z, patch = {}) {
   if (!inj) return false;
   await page.reload();
   await waitFor(page, () => window.__GAME_READY === true, '重载', 15000, 400);
-  await sleep(1000);
+  await page.evaluate(() => { try { window.__GAME__?.freezeWolves?.(true); } catch { /* 夹具未就绪 */ } });
+  await sleep(300);
   return true;
 }
 
@@ -247,10 +249,82 @@ async function g21_gather_feedback(page) {
   check('背包满拒绝时不弹收获飘字', refused && !flGained, 'refused=' + refused + ' floater=' + flGained);
 }
 
+async function g22_unit_animation(page) {
+  // 低倍率原生节拍（opts.turbo=1）：转向 slerp 需要帧级采样抓渐变
+  await page.evaluate(() => {
+    window.__GAME__.setPersonality(0, { combat: 'cautious', work: 'lazy', trait: 'quiet' });
+  });
+  await zoomOut(page);
+  await clickUnit(page, 0);
+
+  // ⓪ 狼摆尾：趁狼自由游荡先采样（随后即冻场，避免战斗干扰后续断言）
+  const tailSeq = await page.evaluate(() => new Promise((res) => {
+    const arr = [];
+    const t0 = performance.now();
+    const tick = () => {
+      let v = null;
+      for (let j = 0; j < 6 && v === null; j++) { const s = window.__GAME__.animState(j, 'wolf'); if (s && s.tail !== null) v = s.tail; }
+      arr.push(v);
+      if (performance.now() - t0 < 1200) requestAnimationFrame(tick);
+      else res(arr.filter((x) => x !== null));
+    };
+    requestAnimationFrame(tick);
+  }));
+  let tRange = 0;
+  for (let i = 1; i < tailSeq.length; i++) tRange = Math.max(tRange, Math.abs(tailSeq[i] - tailSeq[i - 1]));
+  check('狼奔跑摆尾（尾角非恒定）', tailSeq.length >= 3 && tRange > 0.05, '样本=' + tailSeq.length + ' 摆幅=' + tRange.toFixed(3));
+  await page.evaluate(() => window.__GAME__.freezeWolves(true));
+
+  // ① 转向平滑：反向移动命令后帧采样，变化是渐进的（单步 <0.7 弧度）且确实转了（总变化 >0.6）
+  const u = (await gs(page)).units[0];
+  const mv = await sp(page, u.x - 6, u.z - 6, 0.2);
+  if (mv && (await onCanvas(page, mv.x, mv.y))) {
+    await page.mouse.click(mv.x, mv.y, { button: 'right' });
+    // turning=剩余角：出现明显中间态(>0.5 弧度)即证明 slerp 在跑，帧率无关
+    const turning = await waitFor(page, () => Math.abs(window.__GAME__.animState(0)?.turning ?? 0) > 0.5, '转向中间态', 2000, 60);
+    const settled = turning && await waitFor(page, () => Math.abs(window.__GAME__.animState(0)?.turning ?? 9) < 0.05, '转向到位', 3000, 100);
+    check('转向平滑（存在中间态后收敛）', !!settled, 'turning 捕获=' + turning);
+  } else check('转向平滑（帧间渐变非跳变）', false, '反向移动点出画');
+
+  // ② 手持工具：右键树 → axe；采集结束 idle → 收工具
+  // ① 的移动走完（防带着旧 task 进 ② 变长途跋涉）
+  await waitFor(page, () => window.__GAME__.units[0].task == null, '①走完停稳', 20000, 200);
+  const u1 = (await gs(page)).units[0]; // 停稳后刷新坐标：取 12m 内近树，防长途步行耗尽体力
+  const tree = await nearest(page, 'trees', u1.x, u1.z, 12) || await nearest(page, 'trees', u1.x, u1.z, 30);
+  if (tree && (await clickUnit(page, 0))) {
+    await page.evaluate(([x, z]) => window.__GAME__.setCamTarget(x, z), [tree.x, tree.z]);
+    await sleep(500);
+    const okT = await rightClickEntity(page, tree.x, tree.z, ['gather'], 600);
+    const gotAxe = okT && await waitFor(page, () => window.__GAME__.animState(0)?.tool === 'axe', '持斧', 10000, 150);
+    check('砍树持斧（工具挂右手）', gotAxe);
+    let idleTool = false;
+    let snap = '';
+    if (gotAxe) {
+      idleTool = await waitFor(page, () => { const g = window.__GAME__; return g.units[0].task == null && g.animState(0)?.tool === null; }, '收工具', 45000, 200);
+      if (!idleTool) {
+        const s1 = await page.evaluate(() => ({ anim: window.__GAME__.animState(0), pos: [ +window.__GAME__.units[0].x.toFixed(2), +window.__GAME__.units[0].z.toFixed(2) ] }));
+        await sleep(1200);
+        const s2 = await page.evaluate(() => ({ anim: window.__GAME__.animState(0), pos: [ +window.__GAME__.units[0].x.toFixed(2), +window.__GAME__.units[0].z.toFixed(2) ] }));
+        snap = '1s位移=' + Math.hypot(s1.pos[0] - s2.pos[0], s1.pos[1] - s2.pos[1]).toFixed(2) + ' workT ' + s1.anim.workT + '→' + s2.anim.workT + ' tdist ' + s1.anim.tdist + '→' + s2.anim.tdist + ' sel ' + JSON.stringify((await gs(page)).units.map((x2) => x2.selected));
+      }
+    }
+    check('任务结束 idle 收起工具', idleTool, '终态=' + snap);
+  } else check('砍树持斧（工具挂右手）', false, '无树或未选中').valueOf();
+
+  // ③ 倒地补间：伤害夹具放倒 → 0.45s 内 tilt 渐入到位（≥0.9），无瞬时硬切
+  const t20 = await page.evaluate(() => window.__GAME__.animState(0)?.tilt ?? -1);
+  await page.evaluate(() => window.__GAME__.damage(0, 9999));
+  const mid = await page.evaluate(() => new Promise((res) => setTimeout(() => res(window.__GAME__.animState(0)?.tilt ?? -1), 120)));
+  const done = await waitFor(page, () => (window.__GAME__.animState(0)?.tilt ?? 0) >= 0.9, '倒到位', 3000, 120);
+  check('倒地 0.3s 倾倒补间', t20 === 0 && mid >= 0 && mid < 0.9 && done, 't0=' + t20 + ' 中间=' + mid);
+
+}
+
 async function group(browser, port, name, fn, opts = {}) {
   console.log('\n=== ' + name + (opts.slow ? ' [slow]' : '') + ' ===');
   const qs = new URLSearchParams(opts.path ? opts.path.replace(/^\?/, '') : '');
-  if (TURBO > 1) qs.set('turbo', String(TURBO));
+  const turbo = opts.turbo ?? TURBO;
+  if (turbo > 1) qs.set('turbo', String(turbo));
   // 非战斗组一律无狼清场（URL 级，跨 reload 生效）：turbo 快进下狼群会放倒队员、刷屏日志
   if (!opts.wolves) qs.set('nowolf', '1');
   const q = qs.toString();
@@ -892,7 +966,7 @@ async function g13_food(page) {
 }
 
 async function g14_wolf(page) {
-  // 夹具：传送到最近狼旁 4m（攻击后近战立即爆发，不依赖长距离步行）
+  // 夹具链：读最近狼位 → placeUnit（存档注入=会 reload，重载后狼继续跑）→ 重载完立刻冻狼
   const wolfSeed = await page.evaluate(() => {
     const g = window.__GAME__;
     const u0 = g.units[0];
@@ -908,13 +982,43 @@ async function g14_wolf(page) {
   if (wolfSeed && !(await placeUnit(page, wolfSeed.x - 4, wolfSeed.z - 4))) {
     check('攻击野狼', false, '夹具注入失败'); return;
   }
+  await page.evaluate(() => window.__GAME__.freezeWolves(true)); // 重载后第一时间冻场，狼最多再跑 4m
   await zoomOut(page);
   if (!(await clickUnit(page, 0))) await selectAll(page);
-  const u0 = (await gs(page)).units[0];
-  const w0 = await nearest(page, 'wolves', u0.x, u0.z);
-  if (!w0) { check('攻击野狼', false, '无狼'); return; }
-  const okCmd = await rightClickEntity(page, w0.x, w0.z, ['attack'], 500);
-  if (!okCmd) { check('攻击野狼', false, '狼右键未下达攻击命令'); return; }
+  if (!(await gs(page)).wolfList.length) { check('攻击野狼', false, '无狼'); return; }
+  // 狼在跑（游荡 2.2×turbo）——旧快照坐标必 miss：单往返"现读现点"+ 重试
+  let okCmd = false;
+  for (let tryN = 0; tryN < 10 && !okCmd; tryN++) {
+    // 页内同帧"找最近狼→投影→派发右键事件"——零往返，相机 lerp 无法插队
+    okCmd = await page.evaluate(() => {
+      const g = window.__GAME__;
+      const u = g.units[0];
+      let best = null, bd = Infinity;
+      for (const w of g.wolfList) {
+        if (w.dead || w.down) continue;
+        const d = Math.hypot(w.x - u.x, w.z - u.z);
+        if (d < bd) { bd = d; best = w; }
+      }
+      if (!best || bd > 16) return false;
+      // 狼体几何悬在 pos.y（地形高度）之上：按 w.y 起算，坡地投影才不飘
+      for (const h of [0.55, 0.85, 1.15]) {
+        g.rightClickWorld(best.x, best.z, (best.y ?? 0) + h);
+        if (g.units.some((x2) => x2.selected && x2.task === 'attack')) return true;
+      }
+      return false;
+    });
+    if (!okCmd) await sleep(200);
+  }
+  if (!okCmd) {
+    const diag = await page.evaluate(() => {
+      const g = window.__GAME__;
+      const u = g.units[0];
+      const w = g.wolfList.map((x2) => ({ d: +Math.hypot(x2.x - u.x, x2.z - u.z).toFixed(1), dead: x2.dead }));
+      return JSON.stringify({ sel: g.units.map((x2) => x2.selected), task: u.task, dist: u.task && u.task.pos ? +Math.hypot(u.task.pos.x - u.x, u.task.pos.z - u.z).toFixed(1) : null, wolfDist: w, anim: g.animState(0) });
+    });
+    check('攻击野狼', false, '狼右键未下达攻击命令（10 次现读现点皆 miss） ' + diag);
+    return;
+  }
   const fought = await waitFor(page, () => {
     const g = window.__GAME__;
     const wolfChanged = g.wolfList.some((w) => w.dead || w.down);
@@ -1141,18 +1245,24 @@ async function g20_character_ai(page) {
     ['G19 导入 JSON 存档', g19_import, {}],
     ['G20 角色AI', g20_character_ai, {}],
     ['G21 收获反馈', g21_gather_feedback, {}],
+    ['G22 动画生命感', g22_unit_animation, { turbo: 1, wolves: true, serial: true }],
   ];
   const t0 = Date.now();
   const list = ONLY.length ? GROUPS.filter((g) => ONLY.some((o) => g[0].toUpperCase().startsWith(o))) : GROUPS;
   console.log(`\n黑盒并行调度：${list.length} 组 × 并发 ${CONC} · turbo ×${TURBO}`);
-  let next = 0;
-  const worker = async () => {
-    while (next < list.length) {
-      const [name, fn, opts] = list[next++];
-      await group(browser, port, name, fn, opts);
-    }
+  const runPool = async (items) => {
+    let next = 0;
+    const worker = async () => {
+      while (next < items.length) {
+        const [name, fn, opts] = items[next++];
+        await group(browser, port, name, fn, opts);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(CONC, items.length) }, worker));
   };
-  await Promise.all(Array.from({ length: Math.min(CONC, list.length) }, worker));
+  // 串行组先清场独跑：动画采样/低帧率敏感断言在满载页面上物理等不起
+  await runPool(list.filter((g) => g[2].serial));
+  await runPool(list.filter((g) => !g[2].serial));
   await browser.close();
   close();
   console.log(`\n黑盒耗时 ${((Date.now() - t0) / 1000).toFixed(1)}s（并发 ${CONC}，turbo ×${TURBO}）`);
