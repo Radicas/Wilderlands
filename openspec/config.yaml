@@ -1,0 +1,21 @@
+schema: spec-driven
+
+context: |
+  Wilderlands · 荒野开拓者：Vite 5 + TypeScript 5 + Three.js 0.160 纯前端单机沙盒（零后端）。
+  所有 OpenSpec 产物（proposal/design/tasks/spec 正文）用中文书写；结构约定词
+  （## ADDED/MODIFIED/REMOVED/RENAMED Requirements、### Requirement:、#### Scenario:、
+  WHEN/THEN/SHALL/MUST、## Purpose、## Requirements）必须保持英文，validate 依赖它们。
+  分层宪法（原 constitution III）：规则必须是纯逻辑（systems/ 与 sim/ 共用同一模块），
+  表现层只投影状态；平衡数值唯一来源 src/config.ts；玩法真相同步 docs/DESIGN.md。
+  验收门槛：任何行为变更必须同时更新 scripts/sim-run.mjs 断言（无头）与
+  scripts/e2e-blackbox.mjs 场景（真实页面）；回归入口 bash scripts/regress.sh
+  （并行 + ?turbo 快进，测试期默认 nowolf 隔离野狼干扰）。
+  存档改动必须带 migrate.ts 版本迁移链与 migrate-check 用例，禁止破坏旧档。
+
+rules:
+  proposal:
+    - 声明影响存档 schema 时同步给出迁移版本号与 migrate-check 计划
+    - 涉及招募/开局人数等队伍规则的，引用 party 能力条款而非重述数值
+  tasks:
+    - 每个行为变更 change 的 tasks 必须含 sim 断言与黑盒场景两个条目
+    - 表现类任务单列，不与规则任务混在一个复选框
