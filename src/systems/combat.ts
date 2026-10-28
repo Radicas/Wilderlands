@@ -29,8 +29,25 @@ export function spawnWolf(): void {
 }
 
 let wolfSpawnT = 0;
+// 测试夹具开关：清场后不再刷狼/咬人（长流程自动化在 turbo 快进下免遭狼群刷屏与放倒）
+let wolvesOff = false;
+
+/** 移除全部野狼并停止刷怪（仅 window.__GAME__ 调试夹具使用，玩家路径不触碰） */
+export function disableWolves(): void {
+  wolvesOff = true;
+  for (let i = wolves.length - 1; i >= 0; i--) {
+    const w = wolves[i];
+    scene.remove(w.mesh);
+    for (let j = interMeshes.length - 1; j >= 0; j--) {
+      const ent = interMeshes[j].userData.ent as { kind?: string; ent?: unknown };
+      if (ent && ent.kind === 'wolf' && ent.ent === w) interMeshes.splice(j, 1);
+    }
+    wolves.splice(i, 1);
+  }
+}
 
 export function updateWolves(dt: number): void {
+  if (wolvesOff) return;
   // 夜晚野狼更激进：侦测距离加大、跑得更快
   const night = timeOfDay.isNight;
   const detect = night ? 18 : 11;
@@ -137,10 +154,12 @@ export function updateWorld(dt: number): void {
     }
   }
   // 刷狼（夜晚刷新更快）
-  wolfSpawnT += dt;
-  const interval = CFG.wolfSpawn * (timeOfDay.isNight ? 0.55 : 1);
-  if (wolfSpawnT >= interval) {
-    wolfSpawnT = 0;
-    spawnWolf();
+  if (!wolvesOff) {
+    wolfSpawnT += dt;
+    const interval = CFG.wolfSpawn * (timeOfDay.isNight ? 0.55 : 1);
+    if (wolfSpawnT >= interval) {
+      wolfSpawnT = 0;
+      spawnWolf();
+    }
   }
 }

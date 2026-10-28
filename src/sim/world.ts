@@ -4,7 +4,9 @@
  * simTick：每帧推进——时间/玩家任务/野狼 AI/资源重生/刷狼/农场生长/价格。
  * 无 three/DOM 依赖，node 可直接运行（spec 008）。
  */
-import { CFG, START_GOLD, START_INV, UNIT_NAMES, WANDERER_NAMES, WORLD } from '../config';
+import { CFG, START_GOLD, START_INV, START_PARTY, UNIT_NAMES, WANDERER_NAMES, WORLD } from '../config';
+import { recruitBlockers } from '../systems/recruit';
+import { rollPersonality } from '../systems/personality';
 export { CFG };
 export { setLogHandler } from '../systems/log';
 export { transferItem } from '../systems/inventory';
@@ -46,11 +48,12 @@ function spawnWolf(w: SimWorld): boolean {
   return false;
 }
 
-/** 创建模拟世界（确定性：固定种子 → 相同布局与事件流） */
-export function createSimWorld(seed = 1): SimWorld {
+/** 创建模拟世界（确定性：固定种子 → 相同布局与事件流；party=开局人数，默认单人开局） */
+export function createSimWorld(seed = 1, party: number = START_PARTY): SimWorld {
   const rng = new Rng(seed);
   const w: SimWorld = {
     rng,
+    merchant: MERCHANT_POS,
     t: 0.1,
     isNight: false,
     gold: START_GOLD,
@@ -67,9 +70,9 @@ export function createSimWorld(seed = 1): SimWorld {
     events: [],
   };
 
-  // 3 名拓荒者（初始背包；位置与前端 createPlayers 一致）
-  for (let i = 0; i < 3; i++) {
-    w.players.push(new SimUnit('player', (i - 1) * 1.6, 1.2 + i * 0.3, UNIT_NAMES[i], START_INV));
+  // 开局拓荒者（初始背包；人数 = party，默认 START_PARTY，位置与前端 createPlayers 一致）
+  for (let i = 0; i < party; i++) {
+    w.players.push(new SimUnit('player', (i - 1) * 1.6, 1.2 + i * 0.3, UNIT_NAMES[i % UNIT_NAMES.length], START_INV));
   }
 
   // 野狼 3 头
@@ -132,6 +135,10 @@ export function createSimWorld(seed = 1): SimWorld {
   w.wanderer = wanderer;
 
   return w;
+  // 性格由种子流确定性分配（spec 011：同 seed 同性格）；放在所有生成之后，避免扰动布局 rng 流
+  for (const p of w.players) p.personality = rollPersonality(rng.next(), rng.next(), rng.next());
+
+
 }
 
 /** 由世界坐标查地块（模拟用） */
@@ -271,18 +278,21 @@ export function simBuildHouse(w: SimWorld, u: SimUnit, x: number, z: number): bo
   return true;
 }
 
-/** 招募流浪者（等价前端 commands：25 金币换第 4 人，空背包；新人 60 秒后出现） */
+/** 招募流浪者（等价前端 commands："人很贵"条件门：屋顶+余粮+金币全达成，才招空背包新人；60 秒后新流浪者出现） */
 export function simRecruit(w: SimWorld): boolean {
   const wd = w.wanderer;
   if (!wd || !wd.available) { logMsg('流浪者还在路上'); return false; }
-  if (w.gold < CFG.recruitCost) {
-    logMsg('招募需要 ' + CFG.recruitCost + ' 金币（现在只有 ' + w.gold + '）');
-    return false;
-  }
+  const blockers = recruitBlockers({
+    houses: w.buildings.filter((b) => b.type === 'house').length,
+    teamFood: w.players.reduce((s, u) => s + (u.inv.food ?? 0) + (u.inv.berry ?? 0), 0),
+    gold: w.gold,
+  });
+  if (blockers.length) { logMsg('想招人，还得再熬一熬：' + blockers.join('；')); return false; }
   w.gold -= CFG.recruitCost;
   wd.available = false;
   wd.respawn = CFG.wandererRespawn;
   const nu = new SimUnit('player', wd.x, wd.z, wd.name, {});
+  nu.personality = rollPersonality(w.rng.next(), w.rng.next(), w.rng.next()); // 入队即定型（spec 011）
   w.players.push(nu);
   logMsg(wd.name + ' 加入了你的小队！');
   return true;

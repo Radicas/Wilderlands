@@ -4,10 +4,10 @@
  * v0.2: 低多边形分段模型 + 程序化动画
  */
 import * as THREE from 'three';
-import { ANIM, CFG, ITEMS, PALETTE, START_INV, UNIT_NAMES } from '../config';
+import { ANIM, CFG, ITEMS, PALETTE, START_INV, START_PARTY, UNIT_NAMES } from '../config';
 import type { AnimState, BerryEnt, Inventory, LimbRefs, Personality, Mood, RockEnt, Tile, TreeEnt, Unit, UnitRole, UnitTask } from '../types';
-import { rollPersonality, findIdleWork, decideWolfReaction, speedMoodMultiplier, workMoodMultiplier, type IdleTarget, type WolfReaction } from '../systems/personality';
-import { buildings, interMeshes, logMsg, players, rocks, berries, removeSelected, selected, selectableMeshes, trees, wolves } from '../state';
+import { rollPersonality, findIdleWork, decideWolfReaction, speedMoodMultiplier, workMoodMultiplier, moodStep, MOOD_LOG, QUIPS_WORK, QUIPS_WOLF, QUIPS_NIGHT, QUIP_HUNGER, type IdleTarget, type WolfReaction } from '../systems/personality';
+import { buildings, interMeshes, logMsg, merchantPos, players, rocks, berries, removeSelected, selected, selectableMeshes, timeOfDay, trees, wolves } from '../state';
 import { invAdd, invCanAdd, invRatio } from '../systems/inventory';
 import { plantTile } from '../systems/farm';
 import { atkBonus, capacityBonus, emptySkills, gainSkill, harvestBonus, refreshCapacity } from '../systems/skills';
@@ -79,9 +79,9 @@ export class PioneerUnit implements Unit {
     const groundY = groundHeightAt(x, z);
     this.pos = new THREE.Vector3(x, groundY, z);
     this.speed = role === 'wolf' ? CFG.wolfSpeed : CFG.playerSpeed;
-    this.name = name ?? (role === 'player' ? UNIT_NAMES[players.length % 3] : '野狼');
-    // 拓荒者初始背包；野狼/招募第 4 人空背包
-    this.inv = role === 'player' && players.length < 3 ? { ...START_INV } : {};
+    this.name = name ?? (role === 'player' ? UNIT_NAMES[players.length % UNIT_NAMES.length] : '野狼');
+    // 拓荒者初始背包；野狼/后续招募入队者空背包（初始名额 = START_PARTY）
+    this.inv = role === 'player' && players.length < START_PARTY ? { ...START_INV } : {};
     // 负重上限 = 基础容量 + 采集技能加成
     refreshCapacity(this);
 
@@ -349,9 +349,10 @@ export class PioneerUnit implements Unit {
     // 防御减伤只对攻击生效（max(1, dmg-defLv)）；饥饿等持续掉血走 pierce 原样扣
     const dmgIn = pierce ? dmg : incomingDamage(dmg, this);
     if (attacker?.role === 'wolf') gainAttrXp(this, 'defXp', 1);
-    // spec 011：被狼咬 → 害怕
-    if (attacker?.role === 'wolf' && this.role === 'player') {
+    // spec 011：被狼咬 → 害怕（情绪变化才记日志，连咬不刷屏）
+    if (attacker?.role === 'wolf' && this.role === 'player' && this.mood !== 'fear') {
       this.mood = 'fear';
+      logMsg(this.name + MOOD_LOG.fear);
     }
     this.hp = Math.max(0, this.hp - dmgIn);
     if (this.hp <= 0) {
@@ -561,53 +562,56 @@ export class PioneerUnit implements Unit {
     };
   }
 
-  /** 情绪更新（spec 011）：每 1 秒检查触发与消退 */
+  /** 情绪更新（spec 011）：每秒采样环境，交给前后端共用纯函数状态机 */
   private _updateMood(dt: number): void {
     if (this.role !== 'player' || this.dead) return;
     this._moodT += dt;
     if (this._moodT < 1) return;
     this._moodT = 0;
 
-    // 低落倒计时
-    if (this.mood === 'downcast') {
-      this._downcastT -= 1;
-      if (this._downcastT <= 0) this.mood = 'neutral';
+    let wolfNear = false;
+    for (const w of wolves) {
+      if (w.dead || w.down) continue;
+      if (Math.hypot(w.pos.x - this.pos.x, w.pos.z - this.pos.z) < CFG.wolfAutoEngageDist) { wolfNear = true; break; }
     }
+    let sawDownedAlly = false;
+    let allyNear = false;
+    for (const p of players) {
+      if (p === this || p.dead) continue;
+      const d = Math.hypot(p.pos.x - this.pos.x, p.pos.z - this.pos.z);
+      if (p.down && d < CFG.witnessDownDist) sawDownedAlly = true;
+      if (!p.down && d <= 10) allyNear = true;
+    }
+    const nearMarket = Math.hypot(this.pos.x - merchantPos.x, this.pos.z - merchantPos.z) < CFG.moodFearRadius;
 
-    // 触发：饥饿 → 烦躁
-    if (this.hunger <= 20 && this.mood === 'neutral') {
-      this.mood = 'irritable';
-      if (this.personality.trait === 'talkative') logMsg(this.name + '：我都快饿死了还折腾…');
-      return;
+    const res = moodStep(
+      {
+        mood: this.mood, trait: this.personality.trait,
+        hunger: this.hunger, stamina: this.attrs.stamina,
+        nearMarket, night: timeOfDay.isNight, wolfNear, allyNear, sawDownedAlly,
+        working: this.task?.type === 'gather',
+        berryCount: this.inv.berry ?? 0, downcastT: this._downcastT,
+      },
+      Math.random(),
+    );
+    this.mood = res.mood;
+    this._downcastT = res.downcastT;
+    for (const ev of res.events) {
+      if (ev === 'moodChanged') { if (MOOD_LOG[res.mood]) logMsg(this.name + MOOD_LOG[res.mood]); }
+      else if (ev === 'quipWork') logMsg(this.name + '：' + QUIPS_WORK[Math.floor(Math.random() * QUIPS_WORK.length)]);
+      else if (ev === 'quipWolf') logMsg(this.name + '：' + QUIPS_WOLF[Math.floor(Math.random() * QUIPS_WOLF.length)]);
+      else if (ev === 'quipNight') logMsg(this.name + '：' + QUIPS_NIGHT[Math.floor(Math.random() * QUIPS_NIGHT.length)]);
+      else if (ev === 'quipHunger') logMsg(this.name + '：' + QUIP_HUNGER);
+      else if (ev === 'eatBerry') this._eatBerrySelf();
     }
-    // 话痨随机吐槽（干活时偶尔冒一句）
-    if (this.personality.trait === 'talkative' && this.task?.type === 'gather' && Math.random() < CFG.moodTalkChance) {
-      const quips = [
-        this.name + '：这棵树长得还挺结实。',
-        this.name + '：手都磨出茧了…',
-        this.name + '：今天天气不错，就是有点忙。',
-      ];
-      logMsg(quips[Math.floor(Math.random() * quips.length)]);
-    }
-    // 触发：体力低 → 疲惫
-    if (this.attrs.stamina <= 20 && this.mood === 'neutral') {
-      this.mood = 'exhausted';
-      return;
-    }
-    // 消退：吃了东西消除烦躁
-    if (this.mood === 'irritable' && this.hunger > 40) {
-      this.mood = 'neutral';
-    }
-    // 消退：休息够了消除疲惫
-    if (this.mood === 'exhausted' && this.attrs.stamina > 40) {
-      this.mood = 'neutral';
-    }
-    // 消退：害怕——回到商摊 15 米内
-    if (this.mood === 'fear') {
-      const dx = this.pos.x - 4; // merchantPos ≈ (4, 0, 16)
-      const dz = this.pos.z - 16;
-      if (Math.hypot(dx, dz) < CFG.moodFearRadius) this.mood = 'neutral';
-    }
+  }
+
+  /** 吃货自主啃食：吃自己背包里的一颗浆果（F 键的团队口粮分配规则不变） */
+  private _eatBerrySelf(): void {
+    if ((this.inv.berry ?? 0) <= 0) return;
+    this.inv.berry = (this.inv.berry ?? 0) - 1;
+    this.hunger = Math.min(100, this.hunger + CFG.eatHeal);
+    logMsg(this.name + ' 偷偷啃了颗浆果，饥饿 +' + CFG.eatHeal);
   }
 
   /** 狼来了性格反应（spec 011）：无任务时按性格决定主动打/跑/观望 */
@@ -615,7 +619,7 @@ export class PioneerUnit implements Unit {
     if (this.role !== 'player' || this.task || this.down || this.dead) return;
     // 找最近的狼
     let nearest: Unit | null = null;
-    let nd = CFG.wolfAutoEngageDist;
+    let nd: number = CFG.wolfAutoEngageDist;
     for (const w of wolves) {
       if (w.dead || w.down) continue;
       const d = Math.hypot(w.pos.x - this.pos.x, w.pos.z - this.pos.z);
@@ -746,9 +750,9 @@ export class PioneerUnit implements Unit {
   }
 }
 
-/** 创建 3 人拓荒小队 */
+/** 创建开局拓荒小队（人数 = START_PARTY；单人开局，后续靠招募组队） */
 export function createPlayers(): void {
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < START_PARTY; i++) {
     new PioneerUnit('player', (i - 1) * 1.6, 1.2 + i * 0.3);
   }
 }

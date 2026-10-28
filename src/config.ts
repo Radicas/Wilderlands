@@ -48,14 +48,18 @@ export const CFG = {
   moodFearRadius: 15,       // 离商摊多远算"独自一人"触发恐惧
   moodDowncastDur: 30,      // 低落持续秒数
   moodTalkChance: 0.15,     // 话痨每秒吐槽概率
+  gluttonHungerAt: 60,      // 吃货：饥饿低于此值且背包有浆果就自主啃食
+  witnessDownDist: 12,      // 目击队友倒地的感知距离（米）
   // 昼夜循环
   daySeconds: 240,      // 一昼夜时长（秒），约 2 分钟白昼 + 2 分钟夜晚
   // 浆果丛（野外食物）
   berryFood: 2,
   berryRespawn: 30,
   berryCount: 14,
-  // 流浪者招募
+  // 流浪者招募（"人很贵"：组队是熬出来的成果，需同时满足屋顶 / 余粮 / 金币）
   recruitCost: 25,
+  recruitNeedHouse: 1,   // 至少已建 N 座木屋（先给人一个屋顶）
+  recruitNeedFood: 5,    // 全队食物合计 ≥ N（养得起第二条嘴才敢添人）
   wandererRespawn: 60,
   // 木矛（游商武器）
   spearPrice: 8,
@@ -193,5 +197,7 @@ export const PALETTE = {
   captainScarf: 0xd04040,
 } as const;
 
+/** 开局拓荒者人数（单人开局：先独自熬过磨砺，再靠招募条件门组队） */
+export const START_PARTY = 1;
 export const UNIT_NAMES = ['拓荒者·罗恩', '拓荒者·克莉', '拓荒者·巴德'];
 export const WANDERER_NAMES = ['流浪者·艾达', '流浪者·凯恩', '流浪者·梅尔'];

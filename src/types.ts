@@ -64,9 +64,9 @@ export interface ShipSave {
   done: boolean;
 }
 
-/** 存档数据（当前版本 4；历史 v1/v2/v3 由 migrate 升级） */
+/** 存档数据（当前版本 5：spec 011 性格+情绪；历史 v1–v4 由 migrate 逐级升级） */
 export interface SaveData {
-  version: 4;
+  version: 5;
   savedAt: string;
   gold: number;
   time: number;

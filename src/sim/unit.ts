@@ -9,13 +9,18 @@ import { CFG } from '../config';
 import type { Inventory, Skills } from '../types';
 import { groundHeightAt } from './terrain';
 import type { SimGatherKind, SimLimbs, SimTask, SimUnitState, SimWorld } from './types';
-import { invAdd, invCanAdd, invTotal } from '../systems/inventory';
+import { invAdd, invCanAdd, invRatio, invTotal } from '../systems/inventory';
 import { atkBonus, emptySkills, gainSkill, harvestBonus, refreshCapacity } from '../systems/skills';
 import {
   atkFromAttr, defBonusOf, emptyAttrs, gainAttrXp, incomingDamage,
   isHungerPenalty, isStaminaLow, staminaCap, vitalityCap,
 } from '../systems/attributes';
 import { logMsg } from '../systems/log';
+import {
+  rollPersonality, findIdleWork, decideWolfReaction, moodStep, speedMoodMultiplier, workMoodMultiplier,
+  MOOD_LOG, QUIPS_WORK, QUIPS_WOLF, QUIPS_NIGHT, QUIP_HUNGER, type IdleTarget,
+} from '../systems/personality';
+import type { Mood, Personality } from '../types';
 
 export class SimUnit implements SimUnitState {
   role: 'player' | 'wolf';
@@ -45,6 +50,12 @@ export class SimUnit implements SimUnitState {
   wanderT = 0;
   wanderPos: { x: number; z: number } | null = null;
   targetPos: { x: number; z: number } | null = null;
+  /** 角色 AI（spec 011）：性格/情绪，与前端 entities/unit.ts 同构，创建时由 world 注入确定性随机 */
+  personality: Personality = rollPersonality(0, 0, 0);
+  mood: Mood = 'neutral';
+  private _moodT = 0;
+  private _idleT = 0;
+  private _downcastT = 0;
 
   constructor(role: 'player' | 'wolf', x: number, z: number, name: string, inv: Inventory = {}) {
     this.role = role;
@@ -81,6 +92,8 @@ export class SimUnit implements SimUnitState {
     }
     // 体力告急减速（spec 010：≤20% → ×0.8）
     if (isStaminaLow(this)) slow *= 0.8;
+    // 情绪移动倍率（spec 011：害怕 ×0.8、疲惫 ×0.9；与前端同源 moodStep）
+    if (this.role === 'player') slow *= speedMoodMultiplier(this.mood);
     if (d > 0.2) {
       const dirX = (px - this.x) / d;
       const dirZ = (pz - this.z) / d;
@@ -103,6 +116,11 @@ export class SimUnit implements SimUnitState {
     // 防御减伤只对攻击生效（max(1, dmg - defLv)）；饥饿等持续掉血走 pierce 原样扣
     const dmgIn = pierce ? dmg : incomingDamage(dmg, this);
     if (attacker?.role === 'wolf') gainAttrXp(this, 'defXp', 1);
+    // spec 011：被狼咬 → 害怕（同前端：变化才记日志）
+    if (attacker?.role === 'wolf' && this.role === 'player' && this.mood !== 'fear') {
+      this.mood = 'fear';
+      logMsg(this.name + MOOD_LOG.fear);
+    }
     this.hp = Math.max(0, this.hp - dmgIn);
     if (this.hp <= 0) {
       this.down = true;
@@ -152,6 +170,114 @@ export class SimUnit implements SimUnitState {
         }
       }
     }
+    // 角色 AI（spec 011）：情绪 tick + 闲时自治（顺序同前端：先找活后遇狼反应）
+    if (this.role === 'player') {
+      this.moodTick(world, dt);
+      if (!this.task && !this.down) {
+        this._idleT += dt;
+        if (this._idleT >= CFG.idleScanInterval) {
+          this._idleT = 0;
+          this._tryIdleWork(world);
+          this._checkWolfReaction(world);
+        }
+      }
+    }
+  }
+
+  /** 情绪 tick（1 秒采样，前后端共用 moodStep 纯状态机；随机数走 world.rng 保确定性） */
+  moodTick(world: SimWorld, dt: number): void {
+    if (this.dead) return;
+    this._moodT += dt;
+    if (this._moodT < 1) return;
+    this._moodT = 0;
+    let wolfNear = false;
+    for (const wl of world.wolves) {
+      if (wl.dead || wl.down) continue;
+      if (this.dist2(wl.x, wl.z) < CFG.wolfAutoEngageDist) { wolfNear = true; break; }
+    }
+    let sawDownedAlly = false;
+    let allyNear = false;
+    for (const p of world.players) {
+      if (p === this || p.dead) continue;
+      const d = this.dist2(p.x, p.z);
+      if (p.down && d < CFG.witnessDownDist) sawDownedAlly = true;
+      if (!p.down && d <= 10) allyNear = true;
+    }
+    const nearMarket = Math.hypot(this.x - world.merchant.x, this.z - world.merchant.z) < CFG.moodFearRadius;
+    const res = moodStep(
+      {
+        mood: this.mood, trait: this.personality.trait,
+        hunger: this.hunger, stamina: this.attrs.stamina,
+        nearMarket, night: world.isNight, wolfNear, allyNear, sawDownedAlly,
+        working: this.task?.type === 'gather',
+        berryCount: this.inv.berry ?? 0, downcastT: this._downcastT,
+      },
+      world.rng.next(),
+    );
+    this.mood = res.mood;
+    this._downcastT = res.downcastT;
+    for (const ev of res.events) {
+      if (ev === 'moodChanged') { if (MOOD_LOG[res.mood]) logMsg(this.name + MOOD_LOG[res.mood]); }
+      else if (ev === 'quipWork') logMsg(this.name + '：' + QUIPS_WORK[Math.floor(world.rng.next() * QUIPS_WORK.length)]);
+      else if (ev === 'quipWolf') logMsg(this.name + '：' + QUIPS_WOLF[Math.floor(world.rng.next() * QUIPS_WOLF.length)]);
+      else if (ev === 'quipNight') logMsg(this.name + '：' + QUIPS_NIGHT[Math.floor(world.rng.next() * QUIPS_NIGHT.length)]);
+      else if (ev === 'quipHunger') logMsg(this.name + '：' + QUIP_HUNGER);
+      else if (ev === 'eatBerry') this._eatBerrySelf();
+    }
+  }
+
+  /** 吃货自主啃食（同前端 _eatBerrySelf） */
+  private _eatBerrySelf(): void {
+    if ((this.inv.berry ?? 0) <= 0) return;
+    this.inv.berry = (this.inv.berry ?? 0) - 1;
+    this.hunger = Math.min(100, this.hunger + CFG.eatHeal);
+    logMsg(this.name + ' 偷偷啃了颗浆果，饥饿 +' + CFG.eatHeal);
+  }
+
+  /** 闲时找活（同前端 _tryIdleWork：背包满停、lazy 跳过由 findIdleWork 内部保证） */
+  private _tryIdleWork(world: SimWorld): void {
+    if (invRatio(this) >= 1) return;
+    const targets: IdleTarget[] = [];
+    for (const t of world.trees) if (t.alive) targets.push({ kind: 'tree', x: t.x, z: t.z });
+    for (const r of world.rocks) if (r.alive) targets.push({ kind: 'rock', x: r.x, z: r.z });
+    for (const b of world.berries) if (b.alive) targets.push({ kind: 'berry', x: b.x, z: b.z });
+    const leader = world.players.find((p) => !p.down && !p.dead) ?? this;
+    const found = findIdleWork(this.personality.work, leader.x, leader.z, targets, CFG.idleScanRadius);
+    if (!found) return;
+    const list: { x: number; z: number; alive: boolean }[] =
+      found.kind === 'tree' ? world.trees : found.kind === 'rock' ? world.rocks : world.berries;
+    const idx = list.findIndex((e) => e.alive && e.x === found.x && e.z === found.z);
+    if (idx < 0) return;
+    const dx = found.x - this.x;
+    const dz = found.z - this.z;
+    const dist = Math.hypot(dx, dz) || 1;
+    const k = Math.min(dist, 1.5) / dist;
+    this.task = {
+      type: 'gather', kind: found.kind, target: idx,
+      pos: { x: this.x + dx * k, z: this.z + dz * k },
+      workT: 0, workDur: found.kind === 'tree' ? 2.2 : found.kind === 'rock' ? 1.6 : 1.2,
+    };
+  }
+
+  /** 狼来了性格反应（同前端 _checkWolfReaction：engage 追击 / flee 跑向最近队友 / wait 不动） */
+  private _checkWolfReaction(world: SimWorld): void {
+    let nearest: SimUnit | null = null;
+    let ni = -1;
+    let nd: number = CFG.wolfAutoEngageDist;
+    for (let i = 0; i < world.wolves.length; i++) {
+      const wl = world.wolves[i];
+      if (wl.dead || wl.down) continue;
+      const d = this.dist2(wl.x, wl.z);
+      if (d < nd) { nd = d; nearest = wl; ni = i; }
+    }
+    if (nearest === null || ni < 0) return;
+    const reaction = decideWolfReaction(this.personality.combat, nd, this.hp / this.maxHp);
+    if (reaction === 'engage') {
+      this.task = { type: 'attack', target: ni, targetRole: 'wolf', pos: { x: nearest.x, z: nearest.z }, workT: 0 };
+    } else if (reaction === 'flee') {
+      const ally = world.players.find((p) => p !== this && !p.down && !p.dead) ?? world.players.find((p) => !p.dead);
+      this.task = { type: 'move', pos: { x: ally ? ally.x : this.x, z: ally ? ally.z : this.z }, workT: 0 };
+    }
   }
 
   /** 任务状态机（规则同 entities/unit.ts update 的任务分支） */
@@ -162,8 +288,8 @@ export class SimUnit implements SimUnitState {
       if (!this.moveToward(t.pos.x, t.pos.z, dt)) this.task = null;
     } else if (t.type === 'gather') {
       if (!this.moveToward(t.pos.x, t.pos.z, dt)) {
-        // 饥饿 ≤20 → 采集变慢（×0.9）
-        t.workT += dt * (isHungerPenalty(this.hunger) ? CFG.hungerWorkSlow : 1);
+        // 饥饿 ≤20 → 采集变慢（×0.9）；情绪工作倍率（spec 011，同前端）
+        t.workT += dt * (isHungerPenalty(this.hunger) ? CFG.hungerWorkSlow : 1) * workMoodMultiplier(this.mood);
         if (t.workT >= (t.workDur ?? 2)) this._finishGather(world, t);
       }
     } else if (t.type === 'attack') {

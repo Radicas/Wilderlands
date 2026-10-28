@@ -4,7 +4,7 @@
  */
 import { CFG, ITEMS, SKILL_LABELS } from '../config';
 import type { ItemId, SkillId, Unit } from '../types';
-import { gold, players, selected, setLogHandler } from '../state';
+import { gold, modeNow, players, selected, setLogHandler, setMode } from '../state';
 import { invCount, invRatio, invTotal, transferItem } from '../systems/inventory';
 import { skillLevel, skillOf } from '../systems/skills';
 import { timePhaseLabel } from '../systems/daynight';
@@ -29,6 +29,10 @@ function logMsgImpl(s: string): void {
 setLogHandler(logMsgImpl);
 
 export function initHUD(): void {
+  // 模式切换按钮（点击 = 数字键 1-4）
+  document.querySelectorAll('.mbtn').forEach((b) => {
+    b.addEventListener('click', () => setMode(Number((b as HTMLElement).dataset.m)));
+  });
   // 新手提示关闭
   const hintX = document.getElementById('hintX');
   hintX?.addEventListener('click', () => {
@@ -135,6 +139,12 @@ export function updateHUD(selected: Unit[]): void {
   (document.getElementById('rSeed') as HTMLElement).textContent = String(sq.seed);
   (document.getElementById('rBerry') as HTMLElement).textContent = String(sq.berry);
   (document.getElementById('rTime') as HTMLElement).textContent = timePhaseLabel();
+
+  // 模式按钮高亮
+  document.querySelectorAll('.mbtn').forEach((b) => {
+    const el = b as HTMLElement;
+    el.classList.toggle('on', Number(el.dataset.m) === modeNow);
+  });
 
   // 选中角色面板
   const u = selected[0];

@@ -3,7 +3,7 @@
  * 无 DOM / three 依赖，可被 node 直接编译测试（scripts/regress.sh 自动回归）。
  * 当前版本：v5（spec 011 角色 AI：性格+情绪）。历史 v1/v2/v3/v4 在此逐级升级。
  */
-import type { Personality, SaveData } from '../types';
+import type { Personality, SaveData, Skills } from '../types';
 import { rollPersonality } from './personality';
 
 export const SAVE_VERSION = 5;

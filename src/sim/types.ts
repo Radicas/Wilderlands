@@ -111,6 +111,8 @@ export interface SimBuilding {
 /** 模拟世界（唯一权威状态容器；simTick 只改这里） */
 export interface SimWorld {
   rng: Rng;
+  // 商摊位置（情绪『独自一人』判定与交易任务共用；同前端 state.merchantPos）
+  merchant: { x: number; z: number };
   t: number;
   isNight: boolean;
   gold: number;

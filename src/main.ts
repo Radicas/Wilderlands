@@ -13,7 +13,7 @@ import { invTotal } from './systems/inventory';
 import { skillOf } from './systems/skills';
 import { buyPrice, soldToday } from './systems/trade';
 import { ship } from './systems/ship';
-import { spawnWolf, updateWolves, updateWorld } from './systems/combat';
+import { disableWolves, spawnWolf, updateWolves, updateWorld } from './systems/combat';
 import { updateDayNight } from './systems/daynight';
 import { updateFarms } from './systems/farm';
 import { initInput, keys } from './core/input';
@@ -80,11 +80,12 @@ players.forEach((u) => {
 const clock = new THREE.Clock();
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-function loop(): void {
-  requestAnimationFrame(loop);
-  const dt = Math.min(clock.getDelta(), 0.05);
+// 时间倍率（仅测试/自检用）：?turbo=N 每帧跑 N 个固定 0.05s 逻辑子步（上限 16）。
+// 玩家默认不带参数 → 1×，手感与平衡完全不变；headless 软渲染帧率低导致
+// 逻辑被 dt 钳速拖慢时，用它快进游戏世界（只加速模拟，不加速相机/输入）。
+const TURBO = Math.max(1, Math.min(16, Math.floor(Number(new URLSearchParams(location.search).get('turbo')) || 1)));
 
-  updateCameraMove(keys, dt);
+function stepGame(dt: number): void {
   updateDayNight(dt);
   updateShip(dt);
   updateFarms(dt);
@@ -92,10 +93,19 @@ function loop(): void {
   updateWorld(dt);
   players.forEach((u) => u.update(dt));
   wolves.forEach((w) => w.update(dt));
+}
+
+function loop(): void {
+  requestAnimationFrame(loop);
+  const real = Math.min(clock.getDelta(), 0.05);
+
+  updateCameraMove(keys, real);
+  if (TURBO === 1) stepGame(real);
+  else for (let i = 0; i < TURBO; i++) stepGame(0.05);
 
   if (!reducedMotion) {
     players.forEach((u, i) => {
-      if (u instanceof PioneerUnit) u.markerTick(dt);
+      if (u instanceof PioneerUnit) u.markerTick(real);
       if (!u.task && !u.down) {
         u.mesh.position.y = Math.abs(Math.sin(clock.elapsedTime + i)) * 0.03;
       }
@@ -116,6 +126,10 @@ window.addEventListener('resize', resize);
 
 // 场景就绪标记（自检用）
 (window as unknown as { __GAME_READY: boolean }).__GAME_READY = true;
+
+// ?nowolf=1 测试夹具：清场野狼并停止刷怪。URL 参数跨页面 reload 持续生效，
+// 长流程自动化在 turbo 快进下不再被狼群放倒队员/刷屏日志（玩家路径不带参数，无影响）
+if (new URLSearchParams(location.search).get('nowolf') === '1') disableWolves();
 
 // 只读调试句柄（自动化验证 / 开发自检用，与 __GAME_READY 同模式）
 (window as unknown as { __GAME__: unknown }).__GAME__ = {
@@ -199,6 +213,21 @@ window.addEventListener('resize', resize);
   /** 自动化验证夹具：把相机目标移到指定世界坐标（黑盒测试视角对准用） */
   setCamTarget(x: number, z: number) {
     cam.target.set(x, 0, z);
+  },
+  /** 自动化验证夹具：现场生成一名新拓荒者（多选/转移等双人场景用，绕开招募条件门；空背包，语义同招募入队） */
+  addPlayer(x: number, z: number, name?: string) {
+    const u = new PioneerUnit('player', x, z, name);
+    return players.length;
+  },
+  /** 自动化验证夹具：注入固定性格（黑盒确定性：同性格同行为，绕开随机三维度） */
+  setPersonality(i: number, p: { combat: string; work: string; trait: string }) {
+    const u = players[i];
+    if (!u) return;
+    u.personality = p as typeof u.personality;
+  },
+  /** 自动化验证夹具：清场野狼并停止刷怪（长流程组默认执行，防 turbo 快进下狼群刷屏日志/放倒队员；G14 战斗组不调用） */
+  noWolves() {
+    disableWolves();
   },
 };
 

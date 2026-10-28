@@ -5,7 +5,7 @@
 import { CFG } from '../config';
 import { interMeshes, selectableMeshes } from '../state';
 import { camera } from '../core/renderer';
-import { raycaster, toNDC, rayGround } from '../systems/commands';
+import { raycaster, toNDC, rayGround, pickEntity } from '../systems/commands';
 import { tileAt } from '../core/world';
 
 const tip = document.createElement('div');
@@ -29,18 +29,15 @@ export function updateHover(x: number, y: number): void {
 
   if (!txt) {
     const hits = raycaster.intersectObjects(interMeshes, false);
-    if (hits.length) {
-      const ent = hits[0].object.userData.ent as {
-        kind: string;
-        ent?: { alive?: boolean; dead?: boolean; available?: boolean };
-      };
+    const ent = hits.length ? pickEntity(hits[0]) : null;
+    if (ent) {
       if (ent.kind === 'tree') txt = ent.ent?.alive ? '松树 · 右键砍伐得木材' : '树桩 · 待重生';
       else if (ent.kind === 'rock') txt = ent.ent?.alive ? '岩石 · 右键开采得石头' : '矿脉 · 待重生';
       else if (ent.kind === 'berry') txt = ent.ent?.alive ? '浆果丛 · 右键采集得食物' : '浆果丛 · 采空了';
       else if (ent.kind === 'wolf') txt = ent.ent?.dead ? '' : '野狼 · 危险！右键攻击';
       else if (ent.kind === 'wanderer')
         txt = ent.ent?.available
-          ? '流浪者 · 右键花费 ' + CFG.recruitCost + ' 金招募入队'
+          ? '流浪者 · 右键招募（需 ' + CFG.recruitNeedHouse + ' 座木屋 · 全队口粮 ' + CFG.recruitNeedFood + ' · ' + CFG.recruitCost + ' 金）'
           : '流浪者 · 已加入（等新人来）';
       else if (ent.kind === 'merchant') txt = '贸易站 · 出售食物 / 购买种子与木矛';
       else if (ent.kind === 'ship') txt = '搁浅的破船 · 主线目标（右键修船）';

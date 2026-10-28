@@ -5,6 +5,7 @@
 import { cam, renderer, updateCameraMove } from './renderer';
 import { boxSelect, commandAt, selectAt, toNDC, touchAction } from '../systems/commands';
 import { eatFood } from '../systems/economy';
+import { setMode } from '../state';
 import { updateHover } from '../ui/tooltip';
 import { closeAllPanels } from '../ui/panels';
 
@@ -124,13 +125,19 @@ export function initInput(): void {
   window.addEventListener('keydown', (e) => {
     if (e.code === 'KeyQ') cam.theta += 0.06;
     if (e.code === 'KeyE') cam.theta -= 0.06;
+    // 模式切换：1 探索 / 2 播种 / 3 围栏 / 4 木屋（v0.1 功能，v0.2 重构时一度丢失）
+    if (e.code === 'Digit1') setMode(0);
+    if (e.code === 'Digit2') setMode(1);
+    if (e.code === 'Digit3') setMode(2);
+    if (e.code === 'Digit4') setMode(3);
     if (e.code === 'Escape') {
-      // 面板打开时优先关面板
+      // 面板打开时优先关面板；无面板时 ESC 回探索模式
       const open = ['trade', 'shipPanel', 'saveModal', 'invPicker'].some(
         (id) => (document.getElementById(id) as HTMLElement | null)?.style.display === 'block' ||
           (document.getElementById(id) as HTMLElement | null)?.style.display === 'flex',
       );
       if (open) closeAllPanels();
+      else setMode(0);
     }
     if (e.code === 'KeyF') eatFood();
     keys[e.code] = true;

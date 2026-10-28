@@ -1,11 +1,16 @@
 /**
  * Wilderlands · 命令系统
- * 左键点选/框选、右键上下文命令（点什么做什么，点空地走路）。
+ * 左键点选/框选、右键命令：探索模式"点什么做什么，点空地走路"；
+ * 数字键 1-4 切换 探索/播种/围栏/木屋 模式（v0.1 模式条，v0.2 一度丢失，已恢复）。
  */
 import * as THREE from 'three';
 import { CFG } from '../config';
-import type { BerryEnt, RockEnt, TreeEnt, Unit, WandererEnt } from '../types';
-import { gold, interMeshes, logMsg, merchantPos, players, selected, selectableMeshes, trySpendGold } from '../state';
+import type { BerryEnt, RockEnt, Tile, TreeEnt, Unit, WandererEnt } from '../types';
+import { buildings, gold, interMeshes, logMsg, merchantPos, modeNow, players, selected, selectableMeshes, trySpendGold } from '../state';
+import { tileAt } from '../core/world';
+import { recruitBlockers } from './recruit';
+import { plantTile } from './farm';
+import { buildFence, buildHouse, nearBuilding } from './build';
 import { camera } from '../core/renderer';
 import { openTrade } from '../ui/trade';
 import { openShip, talkCaptain } from '../ui/ship';
@@ -87,6 +92,15 @@ function assignFormationPoints(center: THREE.Vector3, count: number, radius: num
   return points;
 }
 
+/** 射线命中实体解析：普通 Mesh 直接读 userData.ent；InstancedMesh 按 instanceId 反查（右键命令与悬停提示共用一套，避免两处口径漂移） */
+export type PickedEnt = { kind: string; ent: any };
+export function pickEntity(h: THREE.Intersection): PickedEnt | null {
+  const obj = h.object;
+  const resolve = obj.userData.resolveInstance as ((id: number) => PickedEnt) | undefined;
+  if (resolve && h.instanceId !== undefined && h.instanceId >= 0) return resolve(h.instanceId);
+  return (obj.userData.ent as PickedEnt | undefined) ?? null;
+}
+
 export function commandAt(ndc: THREE.Vector2): void {
   if (!selected.length) {
     logMsg('先左键选中一名拓荒者，再下达命令');
@@ -95,19 +109,23 @@ export function commandAt(ndc: THREE.Vector2): void {
   raycaster.setFromCamera(ndc, camera);
   const g = rayGround();
   const hits = raycaster.intersectObjects(interMeshes, false);
-  // 命中解析：普通 Mesh 直接读 userData.ent；InstancedMesh 按 instanceId 反查
-  let ent: { kind: string; ent: any } | null = null;
-  if (hits.length) {
-    const h = hits[0];
-    const obj = h.object;
-    const resolve = obj.userData.resolveInstance as ((id: number) => { kind: string; ent: any }) | undefined;
-    if (resolve && h.instanceId !== undefined && h.instanceId >= 0) {
-      ent = resolve(h.instanceId);
-    } else if (obj.userData.ent) {
-      ent = obj.userData.ent;
+  // 命中解析：与悬停提示同一套 pickEntity（InstancedMesh 反查 / 普通 Mesh 直读）
+  const ent: PickedEnt | null = hits.length ? pickEntity(hits[0]) : null;
+  // —— 建造类模式（播种 1 / 围栏 2 / 木屋 3）：对光标落点执行建造，费用走第一名选中者的背包 ——
+  if (modeNow !== 0) {
+    const payer = selected[0];
+    if (!payer) return;
+    if (modeNow === 1) {
+      const tile = g ? tileAt(g.x, g.z) : undefined;
+      if (tile) plantTile(tile, payer);
+    } else if (modeNow === 2) {
+      if (g && !nearBuilding(g)) buildFence(g, payer);
+    } else if (modeNow === 3) {
+      if (g && !nearBuilding(g)) buildHouse(g, payer);
     }
+    return;
   }
-  // —— 右键智能命令（无模式切换：点什么做什么，点空地走路）——
+  // —— 探索模式：右键智能命令（点什么做什么，点空地走路）——
   if (ent && ent.kind === 'wolf' && !ent.ent.dead && !ent.ent.down) {
       // 攻击：围绕野狼站位
       const points = assignFormationPoints(ent.ent.pos, selected.length, 1.8);
@@ -119,12 +137,18 @@ export function commandAt(ndc: THREE.Vector2): void {
       return;
     }
     if (ent && ent.kind === 'wanderer' && ent.ent.available) {
-      // 招募流浪者：花公共金币换一名新拓荒者（第 4 人空背包）
+      // 招募流浪者：先过"人很贵"条件门（屋顶/余粮/金币），全达成才扣钱入队
       const w = ent.ent as WandererEnt;
-      if (!trySpendGold(CFG.recruitCost)) {
-        logMsg('招募需要 ' + CFG.recruitCost + ' 金币（现在只有 ' + gold + '）');
+      const blockers = recruitBlockers({
+        houses: buildings.filter((b) => b.type === 'house').length,
+        teamFood: players.reduce((s, u) => s + (u.inv.food ?? 0) + (u.inv.berry ?? 0), 0),
+        gold,
+      });
+      if (blockers.length) {
+        logMsg('想招人，还得再熬一熬：' + blockers.join('；'));
         return;
       }
+      if (!trySpendGold(CFG.recruitCost)) return; // 条件门已保证够钱，此处仅原子扣款兜底
       w.available = false;
       w.respawn = CFG.wandererRespawn;
       w.mesh.visible = false;
