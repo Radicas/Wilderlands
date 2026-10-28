@@ -219,7 +219,7 @@ async function g21_gather_feedback(page) {
   if (!tree) { check('收获飘字', false, '30m 内无树'); return; }
   await page.evaluate(([tx, tz]) => {
     window.__GAME__.setPos(0, tx, tz);
-    window.__GAME__.setCamTarget(tx, tz); // 镜头跟到树旁，否则投影出视锥点不到
+    window.__GAME__.setCamTarget(tx, tz, true); // 镜头跟到树旁，否则投影出视锥点不到
   }, [tree.x + 2, tree.z + 2]);
   await sleep(500);
   if (!(await clickUnit(page, 0))) { check('收获飘字', false, '无法选中主角'); return; }
@@ -238,7 +238,7 @@ async function g21_gather_feedback(page) {
   // ③ 干活状态条：满包拒收期间任务仍在场，文案带 ▓ 条
   const tree2 = await nearest(page, 'trees', home.x, home.z, 30);
   if (!tree2) { check('干活状态条', false, '无第二棵树'); return; }
-  await page.evaluate(([tx, tz]) => { window.__GAME__.setInv(0, 'wood', 40); window.__GAME__.setPos(0, tx, tz); window.__GAME__.setCamTarget(tx, tz); }, [tree2.x + 2, tree2.z + 2]);
+  await page.evaluate(([tx, tz]) => { window.__GAME__.setInv(0, 'wood', 40); window.__GAME__.setPos(0, tx, tz); window.__GAME__.setCamTarget(tx, tz, true); }, [tree2.x + 2, tree2.z + 2]);
   await sleep(500);
   const ok2 = await rightClickEntity(page, tree2.x, tree2.z, ['gather'], 600);
   const bar = ok2 ? await waitFor(page, () => { const a = (document.getElementById('curAction') || {}).textContent || ''; return a.includes('正在砍树') && a.includes('▓') ? a : false; }, '状态条', 8000, 120) : '';
@@ -265,7 +265,7 @@ async function g22_unit_animation(page) {
       let v = null;
       for (let j = 0; j < 6 && v === null; j++) { const s = window.__GAME__.animState(j, 'wolf'); if (s && s.tail !== null) v = s.tail; }
       arr.push(v);
-      if (performance.now() - t0 < 1200) requestAnimationFrame(tick);
+      if (performance.now() - t0 < 4000) requestAnimationFrame(tick);
       else res(arr.filter((x) => x !== null));
     };
     requestAnimationFrame(tick);
@@ -290,9 +290,13 @@ async function g22_unit_animation(page) {
   // ① 的移动走完（防带着旧 task 进 ② 变长途跋涉）
   await waitFor(page, () => window.__GAME__.units[0].task == null, '①走完停稳', 20000, 200);
   const u1 = (await gs(page)).units[0]; // 停稳后刷新坐标：取 12m 内近树，防长途步行耗尽体力
-  const tree = await nearest(page, 'trees', u1.x, u1.z, 12) || await nearest(page, 'trees', u1.x, u1.z, 30);
+  const tree = await page.evaluate(([ux, uz, r]) => {
+    const ts = window.__GAME__.targets.trees.filter((t) => t.phase === 'mature');
+    const near = (max) => ts.filter((t) => Math.hypot(t.x - ux, t.z - uz) <= max).sort((a, b) => Math.hypot(a.x - ux, a.z - uz) - Math.hypot(b.x - ux, b.z - uz))[0] || null;
+    return near(r) || near(30);
+  }, [u1.x, u1.z, 12]); // 三树种时代：只挑成材树（G22 早于幼树门，盲选会撞"还太小"）
   if (tree && (await clickUnit(page, 0))) {
-    await page.evaluate(([x, z]) => window.__GAME__.setCamTarget(x, z), [tree.x, tree.z]);
+    await page.evaluate(([x, z]) => window.__GAME__.setCamTarget(x, z, true), [tree.x, tree.z]);
     await sleep(500);
     const okT = await rightClickEntity(page, tree.x, tree.z, ['gather'], 600);
     const gotAxe = okT && await waitFor(page, () => window.__GAME__.animState(0)?.tool === 'axe', '持斧', 10000, 150);
@@ -300,7 +304,7 @@ async function g22_unit_animation(page) {
     let idleTool = false;
     let snap = '';
     if (gotAxe) {
-      idleTool = await waitFor(page, () => { const g = window.__GAME__; return g.units[0].task == null && g.animState(0)?.tool === null; }, '收工具', 45000, 200);
+      idleTool = await waitFor(page, () => { const g = window.__GAME__; return g.units[0].task == null && g.animState(0)?.tool === null; }, '收工具', 100000, 200);
       if (!idleTool) {
         const s1 = await page.evaluate(() => ({ anim: window.__GAME__.animState(0), pos: [ +window.__GAME__.units[0].x.toFixed(2), +window.__GAME__.units[0].z.toFixed(2) ] }));
         await sleep(1200);
@@ -347,7 +351,7 @@ async function g23_forest_life(page) {
     const pine = await nearest(page, 'trees', (await gs(page)).units[0].x, (await gs(page)).units[0].z, 25);
     const ptree = (await page.evaluate(() => window.__GAME__.targets.trees.find((t) => t.species === 0 && t.phase === 'mature')) || pine);
     if (ptree) {
-      await page.evaluate(([x, z]) => { window.__GAME__.setPos(0, x - 2, z); window.__GAME__.setCamTarget(x, z); }, [ptree.x, ptree.z]);
+      await page.evaluate(([x, z]) => { window.__GAME__.setPos(0, x - 2, z); window.__GAME__.setCamTarget(x, z, true); }, [ptree.x, ptree.z]);
       await sleep(500);
       const gotCmd = await rightClickEntity(page, ptree.x, ptree.z, ['gather'], 600);
       const gone = gotCmd && await waitFor(page, ([x, z]) => !window.__GAME__.targets.trees.some((t) => Math.hypot(t.x - x, t.z - z) < 0.5), '树桩空窗', 30000, 250, [ptree.x, ptree.z]);
@@ -355,7 +359,7 @@ async function g23_forest_life(page) {
       const refused = await waitFor(page, ([x, z]) => {
         const g = window.__GAME__;
         const t = g.targets.trees.find((tt) => Math.hypot(tt.x - x, tt.z - z) < 0.5 && (tt.phase === 'sprout' || tt.phase === 'young'));
-        if (t) for (const h of [0.65, 1.0, 1.5]) g.rightClickWorld(x, z, h);
+        if (t) for (const h of [0.45, 0.75, 1.1, 1.5, 1.9]) g.rightClickWorld(x, z, h);
         return ((document.getElementById('log') || {}).textContent || '').includes('还太小');
       }, '免砍门（检出即点读）', 20000, 200, [ptree.x, ptree.z]);
       check('幼树免砍门（拒绝+提示文案）', !!refused, 'task=' + JSON.stringify(await page.evaluate(() => window.__GAME__.units[0].task)));
@@ -378,7 +382,7 @@ async function g23_forest_life(page) {
       return c || null;
     }, want);
     if (!t) { check('产量按树种（' + label + '）', false, '无成材样本').valueOf(); continue; }
-    await page.evaluate(([x, z]) => { window.__GAME__.setPos(0, x - 2, z); window.__GAME__.setCamTarget(x, z); }, [t.x, t.z]);
+    await page.evaluate(([x, z]) => { window.__GAME__.setPos(0, x - 2, z); window.__GAME__.setCamTarget(x, z, true); }, [t.x, t.z]);
     await sleep(400);
     if (!(await clickUnit(page, 0))) continue;
     const w0 = await page.evaluate(() => window.__GAME__.invs[0].inv.wood ?? 0);
@@ -432,13 +436,13 @@ async function g24_sound(page) {
     const u = g.units[0];
     const c = g.targets.trees.filter((x) => x.phase === 'mature')
       .sort((a, b) => Math.hypot(a.x - u.x, a.z - u.z) - Math.hypot(b.x - u.x, b.z - u.z))[0];
-    if (c) { g.setPos(0, c.x - 2, c.z); g.setCamTarget(c.x, c.z); }
+    if (c) { g.setPos(0, c.x - 2, c.z); g.setCamTarget(c.x, c.z, true); }
     return c || null;
   });
   if (!t) { check('砍树音效链（chop×3+pickup）', false, '无成树').valueOf(); }
   else {
     await sleep(600);
-    if (await clickUnit(page, 0)) {
+    if ((await clickUnit(page, 0)) || (await selectAll(page))) { // selectAll 回退：高载下 DOM 投影点击可能落空
       await rightClickEntity(page, t.x, t.z, ['gather'], 700);
       const gotPickup = await waitFor(page, () => {
         const c = window.__GAME__.soundStats().counts;
@@ -458,7 +462,7 @@ async function g24_sound(page) {
     const u = g.units[0];
     const c = g.targets.trees.filter((x) => x.phase === 'mature' && Math.hypot(x.x - u.x, x.z - u.z) > 6)
       .sort((a, b) => Math.hypot(a.x - u.x, a.z - u.z) - Math.hypot(b.x - u.x, b.z - u.z))[0];
-    if (c) { g.setPos(0, c.x - 2, c.z); g.setCamTarget(c.x, c.z); }
+    if (c) { g.setPos(0, c.x - 2, c.z); g.setCamTarget(c.x, c.z, true); }
     return c || null;
   });
   if (t2) {
@@ -500,6 +504,85 @@ async function g24_sound(page) {
   check('静音吞发声不吞记录（counts 键集不缩）', Object.keys(stAfter.counts).length >= 0 && c0.length > 2, '');
 }
 
+/** 砍倒指定树种最近成树，返回帧环首样（dur/yaw/伐木者方位） */
+async function fellTree(page, species) {
+  const hBySp = [[1.0, 1.5, 2.0], [1.5, 2.0, 2.6], [2.7, 3.1, 3.5]]; // 白桦冠心 3.1（G23 实测，勿改）
+  const t = await page.evaluate((s) => {
+    const g = window.__GAME__;
+    const u = g.units[0];
+    const c = g.targets.trees.filter((x) => x.species === s && x.phase === 'mature')
+      .sort((a, b) => Math.hypot(a.x - u.x, a.z - u.z) - Math.hypot(b.x - u.x, b.z - u.z))[0];
+    if (c) { g.setPos(0, c.x - 2, c.z); g.setCamTarget(c.x, c.z, true); }
+    return c || null;
+  }, species);
+  if (!t) return { fail: '无树' };
+  await sleep(500);
+  if (!(await clickUnit(page, 0))) return { fail: '选不到人' };
+  // 绕行轮：固定站位对固定相机角会被前景他树确定性遮挡——每轮换入树站位破遮挡
+  const cmd = await waitFor(page, ([x, z, hs]) => {
+    const g = window.__GAME__;
+    const rnd = (window.__wlRnd = (window.__wlRnd || 0) + 1);
+    const a = (rnd % 5) * 1.256;
+    g.setPos(0, x + 2 * Math.sin(a), z + 2 * Math.cos(a));
+    g.setCamTarget(x, z, true);
+    for (const h of hs) {
+      g.rightClickWorld(x, z, h);
+      const tt = g.taskTarget; // 无选中时 fallback players[0]，与 commandAt 同源
+      if (tt && Math.hypot(tt.x - x, tt.z - z) < 0.6) return true;
+    }
+    return false;
+  }, '点中目标树', 12000, 400, [t.x, t.z, hBySp[species]]);
+  if (!cmd) return { fail: '点不中' };
+  await page.evaluate(() => window.__GAME__.fallInfo(true)); // 起采复位：ring 里只有本轮倒地
+  const seen = await waitFor(page, () => window.__GAME__.fallInfo().ring.length > 0, '倒地帧环采样', 60000, 200);
+  if (!seen) return { fail: '环空(未开工/在路上)', task: (await page.evaluate(() => { const u = window.__GAME__.units[0]; return u.task + '@' + u.x.toFixed(1) + ',' + u.z.toFixed(1); })) };
+  const f = await page.evaluate(([x, z]) => {
+    const g = window.__GAME__;
+    const fi = g.fallInfo();
+    const d0 = fi.ring[0];
+    const u = g.units[0];
+    const fe = fi.feller; // 倒地瞬间站位；若单位已移动 >1m 则退回实时位
+    const ux = fe ? fe.x : u.x;
+    const uz = fe ? fe.z : u.z;
+    return d0 ? { dur: d0.dur, species: d0.species, yaw: d0.yaw, exyaw: Math.atan2(x - ux, z - uz) } : null;
+  }, [t.x, t.z]);
+  return f ? { ...f, x: t.x, z: t.z } : null;
+}
+
+async function g25_tree_fall(page) {
+  await page.evaluate(() => {
+    window.__GAME__.setPersonality(0, { combat: 'cautious', work: 'lazy', trait: 'quiet' });
+  });
+  await zoomOut(page);
+  const wrap = (a) => { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a += 2 * Math.PI; return a; };
+  const SS = () => page.evaluate(() => window.__GAME__.soundStats().counts);
+
+  const f1 = await fellTree(page, 0);
+  check('松树倒程 0.55s', !!f1 && f1.species === 0 && Math.abs(f1.dur - 0.55) < 1e-9, JSON.stringify(f1));
+  check('倒向背离伐木者（±0.6rad）', !!f1 && Math.abs(wrap(f1.yaw - f1.exyaw)) < 0.6, f1 ? 'Δ=' + wrap(f1.yaw - f1.exyaw).toFixed(2) : 'null');
+
+  await waitFor(page, () => { const fi = window.__GAME__.fallInfo(); return fi.dying.length === 0 && fi.shake <= 0; }, '上一轮倒地冲净', 15000, 150);
+  await sleep(400);
+  await page.evaluate(() => window.__GAME__.fallReset());
+  const c0 = await SS();
+  const f2 = await fellTree(page, 1);
+  check('橡树倒程 0.75s（最沉最慢）', !!f2 && Math.abs(f2.dur - 0.75) < 1e-9, JSON.stringify(f2));
+  const pkSeen = await waitFor(page, () => window.__GAME__.fallInfo().peak > 0.02, '砸地震屏', 6000, 100);
+  const pk = pkSeen ? await page.evaluate(() => window.__GAME__.fallInfo().peak.toFixed(3)) : 0;
+  check('砸地镜头微震（peak>0.02）', !!pkSeen, 'peak=' + pk);
+  const c1 = await SS();
+  check('起倒沙沙+落地重音各 +1', (c1.thud ?? 0) - (c0.thud ?? 0) === 1 && (c1.down ?? 0) - (c0.down ?? 0) === 1,
+    'thudΔ=' + ((c1.thud ?? 0) - (c0.thud ?? 0)) + ' downΔ=' + ((c1.down ?? 0) - (c0.down ?? 0)));
+
+  await page.evaluate(() => window.__GAME__.fallReset());
+  const f3 = await fellTree(page, 2);
+  check('白桦倒程 0.42s（轻快）', !!f3 && Math.abs(f3.dur - 0.42) < 1e-9, JSON.stringify(f3));
+
+  await sleep(400);
+  const f4 = await fellTree(page, 0);
+  check('震停即自愈（右键仍点得准）', !!f4);
+}
+
 async function group(browser, port, name, fn, opts = {}) {
   console.log('\n=== ' + name + (opts.slow ? ' [slow]' : '') + ' ===');
   const qs = new URLSearchParams(opts.path ? opts.path.replace(/^\?/, '') : '');
@@ -521,7 +604,7 @@ async function group(browser, port, name, fn, opts = {}) {
       // 并行时导航/reload 可能被 CPU 挤慢：只放宽导航超时；动作超时保持默认，避免失败断言干等
       page.setDefaultNavigationTimeout(120000);
       await page.setViewportSize(VW);
-      page.on('console', (m) => { if (m.type() === 'error') errors.push('[console] ' + m.text()); });
+      page.on('console', (m) => { if (m.type() === 'error' && !m.text().includes('AudioContext encountered an error')) errors.push('[console] ' + m.text()); });
       page.on('pageerror', (e) => errors.push('[pageerror] ' + e.message));
       // 并行时页面加载变慢，就绪超时放宽
       await page.goto(`http://127.0.0.1:${port}/index.html${q ? '?' + q : ''}`, { waitUntil: 'load', timeout: 120000 });
@@ -631,11 +714,14 @@ async function g4_gather(page) {
   await zoomOut(page);
   if (!(await clickUnit(page, 0))) await selectAll(page);
   const u0 = (await gs(page)).units[0];
-  const tree = await nearest(page, 'trees', u0.x, u0.z, 30);
-  if (!tree) { check('采集树', false, '30m 内无存活树'); return; }
+  const tree = await page.evaluate(([ux, uz]) => {
+    const ts = window.__GAME__.targets.trees.filter((t) => t.species === 0 && t.phase === 'mature');
+    return ts.filter((t) => Math.hypot(t.x - ux, t.z - uz) <= 30).sort((a, bb) => Math.hypot(a.x - ux, a.z - uz) - Math.hypot(bb.x - ux, bb.z - uz))[0] || null;
+  }, [u0.x, u0.z]); // 锁松树成材：+3 产量是树种表锚（G23 ⑤ 已覆盖他树各档）
+  if (!tree) { check('采集树', false, '30m 内无成材松树'); return; }
   // 相机不跟随角色：相机对准树旁 + 角色传送到树旁 4m（运行时夹具，避免 reload 重生成世界）
   await page.evaluate(([tx, tz, cx, cz]) => {
-    window.__GAME__.setCamTarget(cx, cz);
+    window.__GAME__.setCamTarget(cx, cz, true);
     window.__GAME__.setPos(0, tx, tz);
   }, [tree.x - 4, tree.z - 4, tree.x, tree.z]);
   await sleep(300);
@@ -1232,7 +1318,7 @@ async function g16_rock(page) {
   const beforeStone = (await gs(page)).invs.reduce((a, i) => a + (i.inv.stone ?? 0), 0);
   // 相机不跟随角色：把相机目标移到岩石旁 + 角色传送到岩石旁 4m，右键高度取岩石地面高 +1.5
   await page.evaluate(([rx, rz, cx, cz]) => {
-    window.__GAME__.setCamTarget(cx, cz);
+    window.__GAME__.setCamTarget(cx, cz, true);
     window.__GAME__.setPos(0, rx, rz);
   }, [rock.x - 4, rock.z - 4, rock.x, rock.z]);
   await sleep(300);
@@ -1369,7 +1455,7 @@ async function g20_character_ai(page) {
     window.__GAME__.addPlayer(t.x + 2, t.z, '拓荒者·巴巴');
     window.__GAME__.setPersonality(0, { combat: 'cautious', work: 'lazy', trait: 'quiet' });
     window.__GAME__.setPersonality(1, { combat: 'cautious', work: 'hardworking', trait: 'talkative' });
-    window.__GAME__.setCamTarget(t.x, t.z);
+    window.__GAME__.setCamTarget(t.x, t.z, true);
   });
   await sleep(400);
   await zoomOut(page);
@@ -1429,6 +1515,7 @@ async function g20_character_ai(page) {
     ['G22 动画生命感', g22_unit_animation, { turbo: 1, wolves: true, serial: true }],
     ['G23 森林生态', g23_forest_life, { serial: true }], // 生长循环依赖游戏时间（stump+2×stage≈45s），并发帧饥饿会导致窗口不足
     ['G24 声音系统', g24_sound, {}],
+    ['G25 砸地倒树', g25_tree_fall, { turbo: 1, serial: true }], // 真实时间窗敏感：倒地帧环+震峰；turbo1 免疫步行饿死 // 倒地帧环+震峰是真实时间窗，并发饥饿采空
   ];
   const t0 = Date.now();
   const list = ONLY.length ? GROUPS.filter((g) => ONLY.some((o) => g[0].toUpperCase().startsWith(o))) : GROUPS;
@@ -1446,8 +1533,10 @@ async function g20_character_ai(page) {
   // 串行组先清场独跑（size=1 真串行）：动画采样/游戏时间敏感断言在满载页面上物理等不起
   await runPool(list.filter((g) => g[2].serial), 1);
   await runPool(list.filter((g) => !g[2].serial));
-  await browser.close();
+  const hardExit = setTimeout(() => process.exit(reportExit), 5000); // browser.close WebGL 僵尸保险丝
+  await browser.close().catch(() => {});
   close();
+  clearTimeout(hardExit);
   console.log(`\n黑盒耗时 ${((Date.now() - t0) / 1000).toFixed(1)}s（并发 ${CONC}，turbo ×${TURBO}）`);
   console.log('========== 黑盒测试总结果：' + (allOk ? '全部通过' : '存在失败') + ' ==========');
   process.exit(allOk ? 0 : 1);

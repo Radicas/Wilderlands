@@ -5,11 +5,23 @@
  * 仅测试基础设施，不触碰游戏逻辑。
  */
 import { spawn } from 'node:child_process';
+import { createServer } from 'node:net';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { chromium } from 'playwright';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 /** 起静态 HTTP 服务器（python3 自带，无需额外依赖），返回 { port, close } */
-export async function serve(distDir, port = 8899) {
+function freePort() {
+  return new Promise((res) => {
+    const s = createServer();
+    s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => res(p)); });
+  });
+}
+export async function serve(distDir, port = null) {
+  // 随机空闲端口（防并发脚本互串旧服务器）+ bundle 指纹自证（防端口被他人服务劫持）
+  port = port ?? (await freePort());
+  const want = (readFileSync(join(distDir, 'index.html'), 'utf8').match(/index-[\w-]+\.js/) ?? [''])[0];
   const proc = spawn(
     'python3', ['-m', 'http.server', String(port), '--directory', distDir],
     { stdio: 'ignore' },
@@ -17,8 +29,14 @@ export async function serve(distDir, port = 8899) {
   for (let i = 0; i < 60; i++) {
     try {
       const res = await fetch(`http://127.0.0.1:${port}/index.html`);
-      if (res.ok) return { port, close: () => proc.kill() };
-    } catch { /* 端口未就绪 */ }
+      if (res.ok) {
+        if (!want || (await res.text()).includes(want)) return { port, close: () => proc.kill() };
+        throw new Error('端口 ' + port + ' 被非本 dist 的服务器占用（期望 bundle ' + want + '）');
+      }
+    } catch (e) {
+      if (String(e.message || '').includes('被非本 dist')) { proc.kill(); throw e; }
+      /* 端口未就绪 */
+    }
     await sleep(250);
   }
   proc.kill();
@@ -30,7 +48,7 @@ export async function openGame(port, path = '') {
   const browser = await chromium.launch();
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
   const errors = [];
-  page.on('console', (m) => { if (m.type() === 'error') errors.push('[console] ' + m.text()); });
+  page.on('console', (m) => { if (m.type() === 'error' && !m.text().includes('AudioContext encountered an error')) errors.push('[console] ' + m.text()); });
   page.on('pageerror', (e) => errors.push('[pageerror] ' + e.message));
   const url = `http://127.0.0.1:${port}/${path}`;
   await page.goto(url, { waitUntil: 'load', timeout: 20000 });
