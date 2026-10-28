@@ -145,6 +145,18 @@ export const ANIM = {
   blendSpeed: 8.0,   // 站立↔走路姿态过渡速度（越大切换越干脆）
   kneeBend: 0.55,    // 小腿相对大腿的弯曲系数（膝盖弯曲）
   elbowBend: 0.35,   // 小臂相对上臂的弯曲系数（肘部自然弯曲）
+  // —— unit-animation：生命感参数 ——
+  turnSpeed: 12,     // 视觉朝向 slerp 角速度（弧度/秒，~120°/0.18s）
+  breathRate: 1.6,   // 待机呼吸角速度
+  breathAmp: 0.012,  // 呼吸躯干起伏幅度
+  lookMin: 4,        // 环视最小间隔（秒）
+  lookMax: 8,        // 环视最大间隔
+  lookSwing: 0.35,   // 环视摆头角（弧度）
+  lookDur: 0.4,      // 单次环视时长
+  fallTime: 0.3,     // 倒地/起立补间时长
+  tailSwing: 0.35,   // 狼奔跑摆尾角
+  earFlinch: 0.6,    // 狼受击双耳后压角
+  flinchDur: 0.25,   // 后压持续
 } as const;
 
 /** 小队公共金币（不占负重） */

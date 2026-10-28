@@ -171,7 +171,7 @@ initFloaters();
   },
   get wolfList() {
     return wolves.map((w) => ({
-      x: w.pos.x, z: w.pos.z, down: w.down,
+      x: w.pos.x, y: w.pos.y, z: w.pos.z, down: w.down,
       dead: (w as unknown as { dead?: boolean }).dead ?? false,
     }));
   },
@@ -226,6 +226,49 @@ initFloaters();
     return players.length;
   },
   /** 自动化验证夹具：注入固定性格（黑盒确定性：同性格同行为，绕开随机三维度） */
+  leftClickWorld(x: number, z: number, height = 1) {
+    const canvas = document.querySelector('canvas') as HTMLCanvasElement;
+    const rect = canvas.getBoundingClientRect();
+    const v = new THREE.Vector3(x, height, z).project(camera);
+    const cx = rect.left + (v.x * 0.5 + 0.5) * rect.width;
+    const cy = rect.top + (-v.y * 0.5 + 0.5) * rect.height;
+    const mk = (type: string) => new MouseEvent(type, { button: 0, clientX: cx, clientY: cy, bubbles: true, cancelable: true });
+    canvas.dispatchEvent(mk('mousedown'));
+    canvas.dispatchEvent(mk('mouseup'));
+    return v.z <= 1;
+  },
+  rightClickWorld(x: number, z: number, height = 1) {
+    const canvas = document.querySelector('canvas') as HTMLCanvasElement;
+    const rect = canvas.getBoundingClientRect();
+    const v = new THREE.Vector3(x, height, z).project(camera);
+    const cx = rect.left + (v.x * 0.5 + 0.5) * rect.width;
+    const cy = rect.top + (-v.y * 0.5 + 0.5) * rect.height;
+    const mk = (type: string) => new MouseEvent(type, { button: 2, clientX: cx, clientY: cy, bubbles: true, cancelable: true });
+    canvas.dispatchEvent(mk('mousedown'));
+    canvas.dispatchEvent(mk('mouseup'));
+    return { x: cx, y: cy, inFront: v.z <= 1 };
+  },
+  freezeWolves(v = true) {
+    for (const w of wolves) (w as unknown as { _frozen?: boolean })._frozen = v;
+  },
+  damage(i: number, dmg: number) {
+    const u = players[i];
+    if (u) u.takeDamage(dmg);
+  },
+  animState(i: number, role = 'player') {
+    const u: any = (role === 'wolf' ? wolves : players)[i];
+    if (!u) return null;
+    return {
+      visFacing: +(u._visFacing ?? 0).toFixed(4),
+      turning: +(Math.atan2(Math.sin((u.facing ?? 0) - (u._visFacing ?? 0)), Math.cos((u.facing ?? 0) - (u._visFacing ?? 0)))).toFixed(3),
+      tilt: +(u._downTilt ?? 0).toFixed(3),
+      tool: u._toolKind ?? null,
+      tail: u._limbs?.tail ? +u._limbs.tail.rotation.y.toFixed(3) : null,
+      workT: u.task ? +(u.task.workT ?? 0).toFixed(2) : null,
+      workDur: u.task?.workDur ?? null,
+      tdist: u.task?.pos ? +Math.hypot(u.task.pos.x - u.pos.x, u.task.pos.z - u.pos.z).toFixed(2) : null,
+    };
+  },
   setPersonality(i: number, p: { combat: string; work: string; trait: string }) {
     const u = players[i];
     if (!u) return;

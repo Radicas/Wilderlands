@@ -101,6 +101,22 @@ export function pickEntity(h: THREE.Intersection): PickedEnt | null {
   return (obj.userData.ent as PickedEnt | undefined) ?? null;
 }
 
+/**
+ * 拾取优先解析：SCENE 树放大后，树冠极易盖住狼/人/矿等小目标。
+ * 沿射线取最近的**非树**实体优先；全程只有树才落回树（比例调整的遮挡回归修复）。
+ */
+export function pickBest(hits: THREE.Intersection[]): PickedEnt | null {
+  if (!hits.length) return null;
+  let first: PickedEnt | null = null;
+  for (const h of hits) {
+    const e = pickEntity(h);
+    if (!e) continue;
+    if (e.kind !== 'tree') return e;
+    if (!first) first = e;
+  }
+  return first;
+}
+
 export function commandAt(ndc: THREE.Vector2): void {
   if (!selected.length) {
     logMsg('先左键选中一名拓荒者，再下达命令');
@@ -110,7 +126,7 @@ export function commandAt(ndc: THREE.Vector2): void {
   const g = rayGround();
   const hits = raycaster.intersectObjects(interMeshes, false);
   // 命中解析：与悬停提示同一套 pickEntity（InstancedMesh 反查 / 普通 Mesh 直读）
-  const ent: PickedEnt | null = hits.length ? pickEntity(hits[0]) : null;
+  const ent: PickedEnt | null = pickBest(hits);
   // —— 建造类模式（播种 1 / 围栏 2 / 木屋 3）：对光标落点执行建造，费用走第一名选中者的背包 ——
   if (modeNow !== 0) {
     const payer = selected[0];

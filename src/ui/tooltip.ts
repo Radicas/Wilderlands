@@ -5,7 +5,7 @@
 import { CFG } from '../config';
 import { interMeshes, selectableMeshes } from '../state';
 import { camera } from '../core/renderer';
-import { raycaster, toNDC, rayGround, pickEntity } from '../systems/commands';
+import { raycaster, toNDC, rayGround, pickBest } from '../systems/commands';
 import { tileAt } from '../core/world';
 
 const tip = document.createElement('div');
@@ -29,7 +29,7 @@ export function updateHover(x: number, y: number): void {
 
   if (!txt) {
     const hits = raycaster.intersectObjects(interMeshes, false);
-    const ent = hits.length ? pickEntity(hits[0]) : null;
+    const ent = pickBest(hits);
     if (ent) {
       if (ent.kind === 'tree') txt = ent.ent?.alive ? '松树 · 右键砍伐得木材' : '树桩 · 待重生';
       else if (ent.kind === 'rock') txt = ent.ent?.alive ? '岩石 · 右键开采得石头' : '矿脉 · 待重生';

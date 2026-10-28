@@ -66,6 +66,16 @@ export class PioneerUnit implements Unit {
   private _toolHandle: THREE.Mesh | null = null;
   private _toolHead: THREE.Mesh | null = null;
   private _animT = 0;       // 动画相位（仅动作状态推进）
+  // —— unit-animation：生命感渲染态（不进 save/sim，仅视觉） ——
+  private _visFacing = 0;   // 平滑视觉朝向（逻辑 facing 保持即时）
+  private _downTilt = 0;    // 倒地/死亡倾侧补间 0→1
+  private _breathT = 0;     // 呼吸相位
+  private _lookTimer = 3;   // 下次环视倒计时
+  private _lookAnim = -1;   // 环视进度（-1 未触发）
+  private _flinchT = 0;     // 狼受击耳朵后压倒计时
+  private _toolGroup: THREE.Group | null = null;
+  private _toolHeads: Record<string, THREE.Mesh> = {};
+  _toolKind: string | null = null; // 供调试夹具读取
   private _blend = 0;       // 姿态混合：0=自然站立，1=走路摆动幅度（平滑过渡，避免站走跳变）
   private _animState: AnimState = 'idle';
   attrs = emptyAttrs();
@@ -199,9 +209,21 @@ export class PioneerUnit implements Unit {
       new THREE.MeshLambertMaterial({ color: PALETTE.toolHead }),
     );
     toolHead.position.y = 1.4;
-    tool.add(handle, toolHead);
+    // 四形态工具头（unit-animation：按资源切换，闲置收起）
+    const axeHead = toolHead; // 现通用块=斧头
+    const mattockHead = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.08, 0.1), new THREE.MeshLambertMaterial({ color: PALETTE.toolHead }));
+    mattockHead.position.y = 1.38; // 镐=横置长条
+    const basketHead = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.14, 0.2), new THREE.MeshLambertMaterial({ color: 0x9a7b4f }));
+    basketHead.position.y = 0.15;  // 篮挂小臂下而非举高
+    const spearHead = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.34, 5), new THREE.MeshLambertMaterial({ color: 0xb8b8c8 }));
+    spearHead.position.y = 1.62;
+    tool.add(mattockHead, basketHead, spearHead);
+    axeHead.visible = mattockHead.visible = basketHead.visible = spearHead.visible = false;
+    this._toolHeads = { axe: axeHead, mattock: mattockHead, basket: basketHead, spear: spearHead };
     tool.position.set(0, -0.4, 0.1); // 相对右肩：0.95 - 1.35
     tool.rotation.z = 0.2;
+    tool.visible = false;            // 初始 idle 收工具
+    this._toolGroup = tool;
     armR.add(tool);
     this._toolHandle = handle;
     this._toolHead = toolHead;
@@ -268,6 +290,9 @@ export class PioneerUnit implements Unit {
     const tail = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.42, 5), darkMat);
     tail.position.set(0, 0.95, -0.65);
     tail.rotation.x = -0.6;
+    this._limbs.tail = tail;
+    this._limbs.earL = earL;
+    this._limbs.earR = earR;
 
     this.mesh.add(body, head, snout, earL, earR, eye, eye2, frontL, frontR, backL, backR, tail);
 
@@ -332,7 +357,7 @@ export class PioneerUnit implements Unit {
       this.pos.y = groundHeightAt(this.pos.x, this.pos.z);
       this.mesh.position.copy(this.pos);
       this.lookAtTarget(p);
-      this.mesh.rotation.y = this.facing;
+      // 朝向由 _updateAnimation slerp 统一驱动（unit-animation）
       this._animState = 'walk';
       // 跑动消耗体力；每跑 10 秒涨 1 体力经验
       this.attrs.stamina = Math.max(0, this.attrs.stamina - CFG.staminaMoveCost * dt);
@@ -355,10 +380,11 @@ export class PioneerUnit implements Unit {
       logMsg(this.name + MOOD_LOG.fear);
     }
     this.hp = Math.max(0, this.hp - dmgIn);
+    if (this.role === 'wolf' && dmgIn > 0) this._flinchT = ANIM.flinchDur; // 挨打双耳后压
     if (this.hp <= 0) {
       this.down = true;
       this.downT = 0;
-      this.mesh.rotation.x = Math.PI / 2;
+      // 倾倒改由 _downTilt 补间驱动（unit-animation：不再硬切）
       this.task = null;
       this.targetPos = null;
       removeSelected(this);
@@ -378,7 +404,29 @@ export class PioneerUnit implements Unit {
 
   /** 动画驱动（每帧调用） */
   private _updateAnimation(dt: number): void {
-    if (this.down || this.dead) return;
+    // 转向平滑（unit-animation）：视觉朝向 slerp 追逻辑 facing，路径/判定不受影响
+    let d = this.facing - this._visFacing;
+    d = Math.atan2(Math.sin(d), Math.cos(d)); // 归一化 [-π,π] 防绕远路
+    const step = ANIM.turnSpeed * dt;
+    this._visFacing += Math.abs(d) <= step ? d : Math.sign(d) * step;
+    this.mesh.rotation.y = this._visFacing;
+
+    // 倒地/死亡倾侧补间（约 fallTime 秒，替代硬切；逻辑计时零改动）
+    const tiltTarget = this.down || this.dead ? 1 : 0;
+    if (this._downTilt !== tiltTarget) {
+      const tstep = dt / ANIM.fallTime;
+      this._downTilt = tiltTarget > this._downTilt
+        ? Math.min(tiltTarget, this._downTilt + tstep)
+        : Math.max(tiltTarget, this._downTilt - tstep);
+      this.mesh.rotation.x = this._downTilt * Math.PI / 2 * 0.95;
+    }
+
+    this._breathT += dt * ANIM.breathRate;
+
+    if (this.down || this.dead) {
+      this._syncTool(); // 被扑倒也要收工具（G22 批次抓出的真 bug：躺地握斧）
+      return;
+    }
 
     // 姿态混合：走路时四肢摆动幅度渐入，静止时平滑收回自然站立——站走切换无跳变
     const legTarget = this._animState === 'walk' ? 1 : 0;
@@ -410,14 +458,14 @@ export class PioneerUnit implements Unit {
       if (this._limbs.forearmL) this._limbs.forearmL.rotation.x = Math.sin(t + Math.PI) * swing * 0.7 * ANIM.elbowBend;
       if (this._limbs.forearmR) this._limbs.forearmR.rotation.x = Math.sin(t) * swing * 0.7 * ANIM.elbowBend;
       // 身体上下起伏（头挂在躯干下，自动跟随，不再头身分离）
-      if (this._limbs.torso) this._limbs.torso.position.y = 1.1 + Math.abs(Math.sin(t)) * bobAmp;
+      if (this._limbs.torso) this._limbs.torso.position.y = 1.1 + Math.abs(Math.sin(t)) * bobAmp + Math.sin(this._breathT) * ANIM.breathAmp;
     } else {
       // 狼：对角跑（前左+后右同相，前右+后左反相）
       if (this._limbs.legL) this._limbs.legL.rotation.x = Math.sin(t) * swing;
       if (this._limbs.calfR) this._limbs.calfR.rotation.x = Math.sin(t) * swing;
       if (this._limbs.legR) this._limbs.legR.rotation.x = Math.sin(t + Math.PI) * swing;
       if (this._limbs.calfL) this._limbs.calfL.rotation.x = Math.sin(t + Math.PI) * swing;
-      if (this._limbs.torso) this._limbs.torso.position.y = 0.75 + Math.abs(Math.sin(t)) * bobAmp * 0.5;
+      if (this._limbs.torso) this._limbs.torso.position.y = 0.75 + Math.abs(Math.sin(t)) * bobAmp * 0.5 + Math.sin(this._breathT) * ANIM.breathAmp;
     }
 
     // 采集/攻击：右手（持工具侧）举过头顶再落下的挥砍循环
@@ -426,10 +474,61 @@ export class PioneerUnit implements Unit {
       if (this._limbs.armR) this._limbs.armR.rotation.x = -g;
       if (this._limbs.forearmR) this._limbs.forearmR.rotation.x = -g * 0.3;
     }
+
+    // 待机环视：低频小摆头（站着也是活的）
+    if (this.role === 'player' && this._animState === 'idle' && this._limbs.head) {
+      this._lookTimer -= dt;
+      if (this._lookTimer <= 0) {
+        this._lookAnim = 0;
+        this._lookTimer = ANIM.lookMin + Math.random() * (ANIM.lookMax - ANIM.lookMin);
+      }
+      if (this._lookAnim >= 0) {
+        this._lookAnim += dt / ANIM.lookDur;
+        if (this._lookAnim >= 1) { this._lookAnim = -1; this._limbs.head.rotation.y = 0; }
+        else this._limbs.head.rotation.y = Math.sin(this._lookAnim * Math.PI) * ANIM.lookSwing;
+      }
+    }
+
+    // 狼细节：奔跑摆尾 / 受击双耳后压 / 待机耳朵微动
+    if (this.role === 'wolf' && this._limbs.tail) {
+      this._limbs.tail.rotation.y = this._animState === 'walk' ? Math.sin(t) * ANIM.tailSwing : this._limbs.tail.rotation.y * 0.9;
+      const earL = this._limbs.earL, earR = this._limbs.earR;
+      if (this._flinchT > 0) {
+        this._flinchT -= dt;
+        if (earL) earL.rotation.x = -ANIM.earFlinch;
+        if (earR) earR.rotation.x = -ANIM.earFlinch;
+      } else if (this._animState === 'idle') {
+        if (earL) earL.rotation.x = 0;
+        if (earR) earR.rotation.x = 0;
+        const wig = Math.sin(this._breathT * 0.55) * 0.06;
+        if (earL) earL.rotation.z = wig;
+        if (earR) earR.rotation.z = -wig;
+      }
+    }
+
+    // 工具形态随任务（按资源持握，闲置收起）
+    this._syncTool();
+  }
+
+  private _syncTool(): void {
+    if (!this._toolGroup) return;
+    const tk = this.task;
+    let kind: string | null = null;
+    if (this._animState === 'attack' || tk?.type === 'attack') kind = 'spear';
+    else if (tk?.type === 'gather') kind = tk.kind === 'tree' ? 'axe' : tk.kind === 'rock' ? 'mattock' : 'basket';
+    if (kind !== this._toolKind) {
+      this._toolKind = kind;
+      this._toolGroup.visible = !!kind;
+      for (const [k, m] of Object.entries(this._toolHeads)) m.visible = k === kind;
+    }
   }
 
   update(dt: number): void {
-    if (this.dead) return;
+    if ((this as { _frozen?: boolean })._frozen) return; // 测试夹具：行为冻结（freezeWolves），伤害结算不受影响
+    if (this.dead) {
+      this._updateAnimation(dt); // 尸体也要走补间（侧卧定格，spec unit-animation）
+      return;
+    }
 
     // 动画驱动
     this._updateAnimation(dt);
@@ -439,8 +538,7 @@ export class PioneerUnit implements Unit {
       this.downT += dt;
       if (this.downT >= CFG.downRecover) {
         this.down = false;
-        this.mesh.rotation.x = 0;
-        this.hp = Math.max(this.hp, 50);
+        this.hp = Math.max(this.hp, 50); // 起立同样走 tilt 补间
         if (this.role === 'player') {
           logMsg(this.name + ' 苏醒了');
           gainAttrXp(this, 'vitalityXp', 1); // 大难不死，生命力见长
@@ -498,7 +596,7 @@ export class PioneerUnit implements Unit {
           }
         } else {
           this.lookAtTarget(w.pos);
-          this.mesh.rotation.y = this.facing;
+          // 朝向由 _updateAnimation slerp 统一驱动（unit-animation）
           this.atkT -= dt;
           if (this.atkT <= 0) {
             this.atkT = CFG.atkCd;

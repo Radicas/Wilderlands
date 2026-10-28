@@ -170,6 +170,9 @@ export interface LimbRefs {
   calfR?: THREE.Object3D;
   torso?: THREE.Object3D;
   head?: THREE.Object3D;
+  tail?: THREE.Object3D;
+  earL?: THREE.Object3D;
+  earR?: THREE.Object3D;
 }
 
 export interface Unit {
