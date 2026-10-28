@@ -361,7 +361,7 @@ export function simTick(w: SimWorld, dt: number): void {
   // —— 时间与昼夜（跨日价格回升） ——
   const prevT = w.t;
   w.t = (w.t + dt / CFG.daySeconds) % 1;
-  w.isNight = w.t >= 0.5;
+  w.isNight = w.t >= CFG.nightStartRatio;
   if (w.t < prevT) {
     for (const k of Object.keys(w.soldToday) as ('food' | 'wood' | 'stone')[]) {
       w.soldToday[k] = Math.floor(w.soldToday[k] * CFG.tradeRecover);

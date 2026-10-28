@@ -51,7 +51,8 @@ export const CFG = {
   gluttonHungerAt: 60,      // 吃货：饥饿低于此值且背包有浆果就自主啃食
   witnessDownDist: 12,      // 目击队友倒地的感知距离（米）
   // 昼夜循环
-  daySeconds: 240,      // 一昼夜时长（秒），约 2 分钟白昼 + 2 分钟夜晚
+  daySeconds: 600,      // 一昼夜时长（秒），白天 7.5 分钟 + 夜晚 2.5 分钟（体感反馈：240 太快）
+  nightStartRatio: 0.75, // 时辰 t 达到此比例进入夜晚（昼夜相位与 sim 同源读取）
   // 浆果丛（野外食物）
   berryFood: 2,
   berryRespawn: 30,
@@ -150,6 +151,16 @@ export const ANIM = {
 export const START_GOLD = 20;
 
 /** 每名拓荒者初始背包（招募的第 4 人空背包） */
+// —— 场景几何（视觉比例单一来源）：角色身高 ≈1.78，树 ≈2.7 倍人高，石 ≈1.9m 巨石 ——
+export const SCENE = {
+  treeCrownR: 1.1,   // 树冠锥体底半径
+  treeCrownH: 3.6,   // 树冠锥体高
+  treeTrunkRt: 0.24, // 树干顶半径
+  treeTrunkRb: 0.32, // 树干底半径
+  treeTrunkH: 1.2,   // 树干高
+  rockR: 0.95,       // 岩脉十二面体半径
+};
+
 export const START_INV: Record<ItemId, number> = { wood: 3, stone: 2, food: 3, seed: 1, berry: 0 };
 
 export const PALETTE = {

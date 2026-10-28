@@ -111,15 +111,15 @@ const u1 = (w) => w.players[1];
   const t0 = w.t;
   tick(w, 10);
   s.ok(Math.abs(w.t - (t0 + 10 / CFG.daySeconds)) < 1e-9, '时间推进', `t=${w.t.toFixed(4)}`);
-  w.t = 0.49;
+  w.t = CFG.nightStartRatio - 0.01;
   tick(w, 1);
   s.ok(!w.isNight, '白天 isNight=false');
-  w.t = 0.51;
+  w.t = CFG.nightStartRatio + 0.01;
   tick(w, 1);
   s.ok(w.isNight, '入夜 isNight=true');
   w.soldToday.wood = 8; w.soldToday.food = 5;
   w.t = 0.999;
-  tick(w, 0.5);
+  tick(w, (1 - 0.999) * CFG.daySeconds + 0.5); // 跨日所需秒数随 daySeconds 自适应
   s.ok(w.soldToday.wood === Math.floor(8 * 0.3), '跨日成交量衰减（wood 8→2）', `wood=${w.soldToday.wood}`);
   s.ok(w.soldToday.food === Math.floor(5 * 0.3), '跨日成交量衰减（food 5→1）', `food=${w.soldToday.food}`);
   s.run();
@@ -368,7 +368,7 @@ const u1 = (w) => w.players[1];
   const n0 = wf.wolves.length;
   tick(wf, CFG.wolfSpawn + 1);
   s.ok(wf.wolves.length > n0, '白天 26 秒刷狼', `wolves ${n0}→${wf.wolves.length}`);
-  wf.t = 0.6;
+  wf.t = CFG.nightStartRatio + 0.05;
   const n1 = wf.wolves.length;
   tick(wf, Math.round(CFG.wolfSpawn * 0.55) + 1);
   s.ok(wf.wolves.length > n1, '夜晚 14.3 秒刷狼（更快）', `wolves ${n1}→${wf.wolves.length}`);
@@ -592,7 +592,7 @@ const u1 = (w) => w.players[1];
   u1(wn).x = 100; wn.players[2].x = 100;
   const wolfN = wn.wolves[0];
   wolfN.x = rn.x + 10; wolfN.z = rn.z;
-  wn.t = 0.6; // 夜晚
+  wn.t = CFG.nightStartRatio + 0.05; // 夜晚
   tick(wn, 3);
   const nightDist = wolfN.dist2(rn.x, rn.z);
   s.ok(nightDist < dayDist, '夜晚狼追得更快', `夜晚剩 ${nightDist.toFixed(1)} vs 白天剩 ${dayDist.toFixed(1)}`);

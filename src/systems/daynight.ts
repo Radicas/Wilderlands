@@ -23,7 +23,7 @@ export function updateDayNight(dt: number): void {
   // t ∈ [0,1)，0 = 日出（太阳在东方地平线）
   const prevT = timeOfDay.t;
   timeOfDay.t = (timeOfDay.t + dt / CFG.daySeconds) % 1;
-  timeOfDay.isNight = timeOfDay.t >= 0.5;
+  timeOfDay.isNight = timeOfDay.t >= CFG.nightStartRatio;
   // 新的一天：商人成交压力衰减（隔日回升）
   if (timeOfDay.t < prevT) recoverTrade();
 
@@ -53,9 +53,10 @@ export function updateDayNight(dt: number): void {
 /** 时辰标签（HUD 用） */
 export function timePhaseLabel(): string {
   const t = timeOfDay.t;
-  if (t < 0.17) return '清晨';
-  if (t < 0.33) return '正午';
-  if (t < 0.5) return '黄昏';
-  if (t < 0.83) return '夜晚';
+  const nr = CFG.nightStartRatio;
+  if (t < nr * 0.22) return '清晨';
+  if (t < nr * 0.55) return '白天';
+  if (t < nr) return '黄昏';
+  if (t < nr + (1 - nr) * 0.55) return '夜晚';
   return '深夜';
 }
