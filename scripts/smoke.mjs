@@ -41,14 +41,14 @@ async function main() {
     };
   });
   check('开局金币 = 20', s.gold === 20, 'gold=' + s.gold);
-  check('开局 3 名拓荒者', s.players === 3, 'players=' + s.players);
+  check('开局 1 名拓荒者（单人开局）', s.players === 1, 'players=' + s.players);
   check('开局 3 匹野狼', s.wolves === 3, 'wolves=' + s.wolves);
   check('开局有浆果丛', s.berries > 0, 'berries=' + s.berries);
   check('时辰在 [0,1) 区间', s.time >= 0 && s.time < 1, 't=' + s.time.toFixed(3));
-  check('3 名队员名字齐全且存活', s.units.length === 3 && s.units.every((u) => !u.down && u.hp > 0),
-    s.units.map((u) => u.name.slice(0, 4)).join('、'));
+  check('主角罗恩存活', s.units.length === 1 && s.units[0].name === '拓荒者·罗恩' && !s.units[0].down && s.units[0].hp > 0,
+    s.units.map((u) => u.name.slice(0, 6)).join('、'));
 
-  // —— 4. HUD 数值（初始背包：每人 木3 石2 食3 种1） ——
+  // —— 4. HUD 数值（单人开局：木3 石2 食3 种1） ——
   const hud = await page.evaluate(() => ({
     g: document.getElementById('rGold')?.textContent,
     w: document.getElementById('rWood')?.textContent,
@@ -59,10 +59,10 @@ async function main() {
     t: document.getElementById('rTime')?.textContent,
   }));
   check('HUD 金币=20', hud.g === '20', 'rGold=' + hud.g);
-  check('HUD 木材=9（3人×3）', hud.w === '9', 'rWood=' + hud.w);
-  check('HUD 石头=6（3人×2）', hud.st === '6', 'rStone=' + hud.st);
-  check('HUD 食物=9（3人×3）', hud.f === '9', 'rFood=' + hud.f);
-  check('HUD 种子=3（3人×1）', hud.sd === '3', 'rSeed=' + hud.sd);
+  check('HUD 木材=3（单人开局）', hud.w === '3', 'rWood=' + hud.w);
+  check('HUD 石头=2（单人开局）', hud.st === '2', 'rStone=' + hud.st);
+  check('HUD 食物=3（单人开局）', hud.f === '3', 'rFood=' + hud.f);
+  check('HUD 种子=1（单人开局）', hud.sd === '1', 'rSeed=' + hud.sd);
   check('HUD 浆果=0', hud.b === '0', 'rBerry=' + hud.b);
   check('HUD 时辰非空', typeof hud.t === 'string' && hud.t.length > 0, 'rTime=' + hud.t);
 
@@ -77,7 +77,7 @@ async function main() {
       saveModal: vis('saveModal'), invPicker: vis('invPicker'), victory: vis('victory'),
     };
   });
-  check('无底部模式按钮（已改为全智能交互）', ui.modes === 0, 'mbtn=' + ui.modes);
+  check('底部模式按钮 4 枚（探索/播种/围栏/木屋，spec unit-control）', ui.modes === 4, 'mbtn=' + ui.modes);
   check('存档按钮存在', ui.saveBtn);
   check('新手提示可见', ui.hint === 'block');
   const hidden = ['sel', 'trade', 'shipPanel', 'saveModal', 'invPicker', 'victory'];

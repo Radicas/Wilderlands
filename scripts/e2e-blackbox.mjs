@@ -7,17 +7,23 @@
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
-import { setTimeout as sleep } from 'node:timers/promises';
-import { serve, openGame, check, resetCount, summary, failFast, panelVisible } from './_e2e-util.mjs';
+import { setTimeout as rawSleep } from 'node:timers/promises';
+import { serve, openGame, check, resetCount, summary, failFast, panelVisible, panelGone, runInGroup } from './_e2e-util.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const VW = { width: 1280, height: 800 };
 let allOk = true;
+// headless 软渲染帧率低 → 用游戏的 ?turbo=N 时间倍率快进逻辑（渲染不动，测试等待大幅缩短）
+const TURBO = Math.max(1, Number(process.env.WL_TURBO ?? 8) || 1);
+// 并行组数：各组是独立浏览器上下文（localStorage 隔离），互不干扰；软件渲染吃 CPU，默认 4
+const CONC = Math.max(1, Number(process.env.WL_CONCURRENCY ?? 4) || 1);
+// turbo 快进下，长等待（≥1500ms 的都是等游戏逻辑推进）压缩到 40%；短等待多为 DOM/动画节拍，保持真实时间
+const sleep = (ms) => rawSleep(TURBO > 1 && ms >= 1500 ? Math.max(600, Math.ceil(ms * 0.4)) : ms);
 
 // ========== 辅助 ==========
 
 /** 轮询等待：fn 返回 truthy 则通过；fn 如需外部数据必须用参数 a（page.evaluate 不捕获闭包变量） */
-async function waitFor(page, fn, desc, timeout = 30000, step = 300, args) {
+async function waitFor(page, fn, desc, timeout = 30000, step = 120, args) {
   const t0 = Date.now();
   while (Date.now() - t0 < timeout) {
     try {
@@ -162,6 +168,9 @@ async function rightClickEntity(page, x, z, expectTasks, waitMs = 600) {
 }
 
 /** 读日志全部文本 */
+/** 输入生效轮询：模式按钮 .on 高亮由 updateHUD 下一帧补上，瞬时读会踩帧间隙（G9 历史误伤元凶） */
+const mbtnOn = (page, m) => waitFor(page, () => !!document.querySelector(`.mbtn[data-m="${m}"].on`), '模式按钮 ' + m, 15000, 150);
+
 const logs = (page) => page.evaluate(() =>
   Array.from(document.querySelectorAll('#log .msg')).map((m) => m.textContent || ''));
 
@@ -191,24 +200,69 @@ async function nearest(page, listKey, x, z, maxDist = Infinity) {
 }
 
 /** 场景组骨架：独立 context，组内共享状态 */
+/** 自愈浏览器：无 GPU 的 headless 环境里 chromium 偶发整体崩溃（曾连坐后续所有组）；断连自动重启 */
+let _browser = null;
+async function liveBrowser() {
+  if (_browser && _browser.isConnected && _browser.isConnected()) return _browser;
+  if (_browser) { try { await _browser.close(); } catch { /* 已死 */ } }
+  console.log('  ⚠ 浏览器已断开（环境挤压崩溃），自动重启');
+  _browser = await chromium.launch();
+  return _browser;
+}
+
 async function group(browser, port, name, fn, opts = {}) {
-  resetCount();
   console.log('\n=== ' + name + (opts.slow ? ' [slow]' : '') + ' ===');
-  const ctx = await browser.newContext();
-  const page = await ctx.newPage();
-  await page.setViewportSize(VW);
-  const errors = [];
-  page.on('console', (m) => { if (m.type() === 'error') errors.push('[console] ' + m.text()); });
-  page.on('pageerror', (e) => errors.push('[pageerror] ' + e.message));
-  await page.goto(`http://127.0.0.1:${port}/index.html${opts.path ?? ''}`, { waitUntil: 'load', timeout: 20000 });
-  await page.waitForFunction(() => window.__GAME_READY === true, null, { timeout: 20000 });
-  try {
-    await fn(page, errors);
-    check('组内无 console error / pageerror', errors.length === 0, errors.slice(0, 2).join(' | ') || '干净');
-  } catch (e) {
-    check('组执行无异常', false, String(e && e.message || e));
+  const qs = new URLSearchParams(opts.path ? opts.path.replace(/^\?/, '') : '');
+  if (TURBO > 1) qs.set('turbo', String(TURBO));
+  // 非战斗组一律无狼清场（URL 级，跨 reload 生效）：turbo 快进下狼群会放倒队员、刷屏日志
+  if (!opts.wolves) qs.set('nowolf', '1');
+  const q = qs.toString();
+  let ctx = null;
+  let page = null;
+  let errors = [];
+  // 环境抖动防护：导航/就绪被 CPU 挤到超时时整组重开一次（历史上单组超时曾把整批拖崩）
+  let opened = false;
+  for (let attempt = 1; attempt <= 2 && !opened; attempt++) {
+    try {
+      ctx = await (await liveBrowser()).newContext();
+      page = await ctx.newPage();
+      errors = [];
+      // 并行时导航/reload 可能被 CPU 挤慢：只放宽导航超时；动作超时保持默认，避免失败断言干等
+      page.setDefaultNavigationTimeout(120000);
+      await page.setViewportSize(VW);
+      page.on('console', (m) => { if (m.type() === 'error') errors.push('[console] ' + m.text()); });
+      page.on('pageerror', (e) => errors.push('[pageerror] ' + e.message));
+      // 并行时页面加载变慢，就绪超时放宽
+      await page.goto(`http://127.0.0.1:${port}/index.html${q ? '?' + q : ''}`, { waitUntil: 'load', timeout: 120000 });
+      await page.waitForFunction(() => window.__GAME_READY === true, null, { timeout: 120000 });
+      opened = true;
+    } catch (e) {
+      const msg = String(e && e.message || e).split('\n')[0];
+      if (attempt < 2) {
+        console.log('  ⚠ [' + name + '] 页面打开超时（' + msg + '），整组重开重试');
+        // close 可能被无 GPU 环境下的狂转页面挂死（历史元凶：僵尸页 738% CPU 拖垮全批）：限时放弃 + 冷却再重开
+        try { await Promise.race([ctx.close(), sleep(8000)]); } catch { /* 已死 */ }
+        await sleep(5000);
+      } else {
+        try { await Promise.race([ctx.close(), sleep(8000)]); } catch { /* 已死 */ }
+        const bad = await runInGroup(name, async () => {
+          check('页面打开成功（重试后）', false, msg);
+          return summary(name);
+        });
+        allOk = allOk && bad;
+        return false;
+      }
+    }
   }
-  const ok = summary(name);
+  const ok = await runInGroup(name, async () => {
+    try {
+      await fn(page, errors);
+      check('组内无 console error / pageerror', errors.length === 0, errors.slice(0, 2).join(' | ') || '干净');
+    } catch (e) {
+      check('组执行无异常', false, String(e && e.message || e));
+    }
+    return summary(name);
+  });
   allOk = allOk && ok;
   await ctx.close();
   return ok;
@@ -219,7 +273,7 @@ async function group(browser, port, name, fn, opts = {}) {
 async function g1_select(page) {
   await zoomOut(page);
   const s0 = await gs(page);
-  check('开局 3 名拓荒者', s0.players === 3);
+  check('开局 1 名拓荒者（单人开局）', s0.players === 1);
   check('开局金币 20', s0.gold === 20);
   const clicked = await clickUnit(page, 0);
   check('左键点选角色成功', clicked);
@@ -234,7 +288,7 @@ async function g1_select(page) {
   if (far && (await onCanvas(page, far.x, far.y))) {
     await page.mouse.click(far.x, far.y);
     await sleep(300);
-    check('点空白后取消选中（面板隐藏）', !(await panelVisible(page, 'sel')));
+    check('点空白后取消选中（面板隐藏）', await panelGone(page, 'sel'));
   } else {
     check('点空白后取消选中（面板隐藏）', false, '空白点不可达');
   }
@@ -242,6 +296,12 @@ async function g1_select(page) {
 
 async function g2_boxselect(page) {
   await zoomOut(page);
+  // 夹具：单人开局下现场补一名队友（框选/多选场景需要 ≥2 人，语义同招募入队）
+  await page.evaluate(() => {
+    const u = window.__GAME__.units[0];
+    window.__GAME__.addPlayer(u.x + 3, u.z + 1.5, '拓荒者·克莉');
+  });
+  await sleep(300);
   await selectAll(page);
   const selN = await page.evaluate(() => window.__GAME__.units.filter((u) => u.selected).length);
   check('先确保有选中（全屏框选）', selN >= 1, 'selected=' + selN);
@@ -331,6 +391,12 @@ async function g5_trade(page) {
   const who1 = await page.evaluate(() => document.getElementById('trWho')?.textContent || '');
   check('面板标注交易对象', who1.includes('与'), who1);
   // —— 锁定验证：开面板后点选另一角色，交易对象不变 ——
+  // 单人开局：现场补一名队友作为"换选中"对象（交易锁定语义不变）
+  await page.evaluate(() => {
+    const u = window.__GAME__.units[0];
+    if (window.__GAME__.players < 2) window.__GAME__.addPlayer(u.x + 2.5, u.z, '拓荒者·克莉');
+  });
+  await sleep(300);
   await clickUnit(page, 1);
   await sleep(300);
   const who2 = await page.evaluate(() => document.getElementById('trWho')?.textContent || '');
@@ -370,7 +436,7 @@ async function g5_trade(page) {
     (logB.filter((t) => !logA.includes(t))).join(' | '));
   // —— 关闭方式 ——
   await clickDom(page, '#trClose');
-  check('trClose 关闭交易面板', !(await panelVisible(page, 'trade')));
+  check('trClose 关闭交易面板', await panelGone(page, 'trade'));
   // 面板开着时点画布外部不关闭
   await clickUnit(page, 0);
   const m2 = await page.evaluate(() => window.__GAME__.targets.merchant);
@@ -382,7 +448,7 @@ async function g5_trade(page) {
   await sleep(400);
   check('点画布外部不关交易面板', await panelVisible(page, 'trade'));
   await page.keyboard.press('Escape');
-  check('ESC 关闭交易面板', !(await panelVisible(page, 'trade')));
+  check('ESC 关闭交易面板', await panelGone(page, 'trade'));
 }
 
 async function g6_panels(page) {
@@ -396,13 +462,13 @@ async function g6_panels(page) {
   const m = await page.evaluate(() => window.__GAME__.targets.merchant);
   const okCmd1 = await rightClickEntity(page, m.x, m.z, ['trade'], 500);
   if (!okCmd1) { check('交易互斥', false, '商摊右键未下达交易命令'); return; }
-  await waitFor(page, () => { const el = document.getElementById('trade'); return el && getComputedStyle(el).display !== 'none'; }, '开交易', 90000);
+  await waitFor(page, () => { const el = document.getElementById('trade'); return el && getComputedStyle(el).display !== 'none'; }, '开交易', 45000);
   await clickDom(page, '#saveBtn');
   await sleep(300);
   check('交易开着点存档：存档开、交易关（互斥）',
-    (await panelVisible(page, 'saveModal')) && !(await panelVisible(page, 'trade')));
+    (await panelVisible(page, 'saveModal')) && await panelGone(page, 'trade'));
   await page.keyboard.press('Escape');
-  check('ESC 关闭存档面板', !(await panelVisible(page, 'saveModal')));
+  check('ESC 关闭存档面板', await panelGone(page, 'saveModal'));
   // 修船面板互斥
   const ship = await page.evaluate(() => window.__GAME__.targets.ship);
   const okCmd2 = await rightClickEntity(page, ship.x, ship.z, ['walk'], 500);
@@ -411,7 +477,7 @@ async function g6_panels(page) {
   check('右键船打开修船面板', await panelVisible(page, 'shipPanel'));
   await clickDom(page, '#saveBtn');
   check('修船开着点存档：存档开、修船关（互斥）',
-    (await panelVisible(page, 'saveModal')) && !(await panelVisible(page, 'shipPanel')));
+    (await panelVisible(page, 'saveModal')) && await panelGone(page, 'shipPanel'));
   await page.keyboard.press('Escape');
   // 无面板时 ESC 回探索
   await page.keyboard.press('Escape');
@@ -472,7 +538,7 @@ async function g7_save(page) {
   await waitFor(page, () => window.__GAME_READY === true, '重载2', 15000, 400);
   await sleep(1500);
   const lg2 = await logs(page);
-  check('破损存档：回退新开局并提示', (await gs(page)).players === 3 &&
+  check('破损存档：回退新开局并提示', (await gs(page)).players === 1 &&
     lg2.some((t) => t.includes('存档不可用')), lg2.slice(-2).join(' | '));
   // —— 导出 JSON ——
   const dlPromise = page.waitForEvent('download', { timeout: 15000 }).catch(() => null);
@@ -487,7 +553,7 @@ async function g7_save(page) {
     const txt = fs.readFileSync(path, 'utf8');
     try {
       const parsed = JSON.parse(txt);
-      check('导出 JSON 可解析且含版本', typeof parsed.version === 'number' && Array.isArray(parsed.units) && parsed.units.length === 3,
+      check('导出 JSON 可解析且含版本', typeof parsed.version === 'number' && Array.isArray(parsed.units) && parsed.units.length === 1,
         'version=' + parsed.version + ' units=' + parsed.units.length);
     } catch {
       check('导出 JSON 可解析且含版本', false, 'JSON 无效');
@@ -517,11 +583,49 @@ async function g8_recruit(page) {
   await page.keyboard.press('Escape');
   const w = await page.evaluate(() => window.__GAME__.targets.wanderer);
   if (!w || !w.available) { check('招募流浪者', false, '流浪者不可用'); return; }
+
+  // —— 条件门·拒绝段：无屋顶/口粮不足时，25 金也招不了人 ——
   await rightClickWorld(page, w.x, w.z);
-  const ok = await waitFor(page, () => window.__GAME__.players === 4 && !window.__GAME__.targets.wanderer.available, '招募', 15000);
+  await sleep(1500);
+  const rej = await gs(page);
+  const rejLog = await logs(page);
+  check('条件未达成：拒绝招募（人数不变）', rej.players === 1 && rej.targets.wanderer.available, 'players=' + rej.players);
+  check('条件未达成：金币不扣', rej.gold === 25, 'gold=' + rej.gold);
+  check('条件未达成：日志点名缺什么', rejLog.some((t) => t.includes('想招人，还得再熬一熬')), rejLog.slice(-2).join(' | '));
+
+  // —— 夹具：存档注入"1 座木屋 + 全队口粮 6"，凑齐条件门 ——
+  await clickDom(page, '#saveBtn');
+  await waitFor(page, () => { const el = document.getElementById('saveModal'); return el && getComputedStyle(el).display !== 'none'; }, '存档面板', 8000);
+  await clickDom(page, '.sbtn[data-slot="auto"][data-act="save"]');
+  await sleep(300);
+  await page.keyboard.press('Escape');
+  const inj = await page.evaluate(() => {
+    const raw = localStorage.getItem('wilderlands.save.auto');
+    if (!raw) return false;
+    const s = JSON.parse(raw);
+    s.buildings = [{ type: 'house', x: 2, z: 2 }];
+    s.units[0].inv = { ...s.units[0].inv, food: 6 };
+    localStorage.setItem('wilderlands.save.auto', JSON.stringify(s));
+    localStorage.setItem('wilderlands.save.pending', 'auto');
+    return true;
+  });
+  if (!inj) { check('招募流浪者', false, '条件门夹具注入失败'); return; }
+  await page.reload();
+  await waitFor(page, () => window.__GAME_READY === true, '重载', 15000, 400);
+  await sleep(1000);
+
+  // —— 条件门·成功段：屋顶+余粮+金币齐，流浪者入队 ——
+  await zoomOut(page);
+  if (!(await clickUnit(page, 0))) await selectAll(page);
+  const w2 = await page.evaluate(() => window.__GAME__.targets.wanderer);
+  if (!w2 || !w2.available) { check('招募流浪者', false, '重载后流浪者不可用'); return; }
+  await rightClickWorld(page, w2.x, w2.z);
+  const ok = await waitFor(page, () => window.__GAME__.players === 2 && !window.__GAME__.targets.wanderer.available, '招募', 15000);
   const after = await gs(page);
   const names = after.units.map((u) => u.name);
-  check('招募后第 4 人入队', ok && after.players === 4, names.join('、'));
+  check('条件达成：第 2 名队员入队', ok && after.players === 2, names.join('、'));
+  check('招募扣 25 金', after.gold === 0, 'gold=' + after.gold);
+  check('新队员空背包', after.invs.length === 2 && Object.keys(after.invs[1].inv).every((k) => !after.invs[1].inv[k]), JSON.stringify(after.invs[1].inv));
   check('流浪者变为不可招募', !after.targets.wanderer.available);
   const lg = await logs(page);
   check('招募日志出现', lg.some((t) => t.includes('加入了你的小队')), lg.slice(-2).join(' | '));
@@ -532,7 +636,7 @@ async function g9_modes(page) {
   if (!(await clickUnit(page, 0))) await selectAll(page);
   const u0 = (await gs(page)).units[0];
   await page.keyboard.press('2');
-  check('数字键 2 切播种模式', await page.evaluate(() => !!document.querySelector('.mbtn[data-m="1"].on')));
+  check('数字键 2 切播种模式', await mbtnOn(page, 1));
   // 播种：动态找无实体空地，最多重试 3 个点位（避免随机 spot 撞到不可种的位置）
   const t0 = (await gs(page)).tiles.length;
   let planted = false;
@@ -548,7 +652,7 @@ async function g9_modes(page) {
   check('播种日志', lg.some((t) => t.includes('播种完成')), lg.slice(-2).join(' | '));
   // 围栏：另找一块空地（最多重试 3 个点位）
   await page.keyboard.press('3');
-  check('数字键 3 切围栏模式', await page.evaluate(() => !!document.querySelector('.mbtn[data-m="2"].on')));
+  check('数字键 3 切围栏模式', await mbtnOn(page, 2));
   const b0 = (await gs(page)).buildings;
   let fenced = false;
   for (let i = 0; i < 3 && !fenced; i++) {
@@ -561,7 +665,7 @@ async function g9_modes(page) {
   check('围栏建成（建筑 +1）', fenced);
   // 木屋：资源不足
   await page.keyboard.press('4');
-  check('数字键 4 切木屋模式', await page.evaluate(() => !!document.querySelector('.mbtn[data-m="3"].on')));
+  check('数字键 4 切木屋模式', await mbtnOn(page, 3));
   const b1 = (await gs(page)).buildings;
   const spot3 = await findClearSpot(page, u0.x + 6, u0.z + 14, 8);
   const p3 = spot3 ? await sp(page, spot3.x, spot3.z) : null;
@@ -572,13 +676,19 @@ async function g9_modes(page) {
     lg2.slice(-2).join(' | '));
   // 回到探索
   await page.keyboard.press('1');
-  check('数字键 1 回探索模式', await page.evaluate(() => !!document.querySelector('.mbtn[data-m="0"].on')));
+  check('数字键 1 回探索模式', await mbtnOn(page, 0));
   await page.keyboard.press('Escape');
-  check('ESC 保持探索模式', await page.evaluate(() => !!document.querySelector('.mbtn[data-m="0"].on')));
+  check('ESC 保持探索模式', await mbtnOn(page, 0));
 }
 
 async function g10_transfer(page) {
   await zoomOut(page);
+  // 夹具：单人开局下现场补一名队友，作为转移接收方（克莉）
+  await page.evaluate(() => {
+    const u = window.__GAME__.units[0];
+    window.__GAME__.addPlayer(u.x + 4, u.z + 1, '拓荒者·克莉');
+  });
+  await sleep(300);
   if (!(await clickUnit(page, 0))) await selectAll(page);
   await sleep(200);
   const before = await page.evaluate(() => window.__GAME__.invs.map((i) => i.inv.wood ?? 0));
@@ -589,7 +699,7 @@ async function g10_transfer(page) {
   const after = await page.evaluate(() => window.__GAME__.invs.map((i) => i.inv.wood ?? 0));
   check('转移 1 木材：A -1 / B +1', after[0] === before[0] - 1 && after[1] === before[1] + 1,
     before.join('/') + ' → ' + after.join('/'));
-  check('转移后浮层自动关闭', !(await panelVisible(page, 'invPicker')));
+  check('转移后浮层自动关闭', await panelGone(page, 'invPicker'));
   // 数量按钮
   await clickDom(page, '.invTr[data-id="wood"]');
   await sleep(200);
@@ -597,7 +707,7 @@ async function g10_transfer(page) {
   const qty = await page.evaluate(() => document.querySelector('.pkQtyNum')?.textContent);
   check('“全部”按钮显示剩余数量', Number(qty) >= 1, 'qty=' + qty);
   await clickDom(page, '.pkCancel');
-  check('取消关闭浮层', !(await panelVisible(page, 'invPicker')));
+  check('取消关闭浮层', await panelGone(page, 'invPicker'));
   // 丢弃
   await clickDom(page, '.invTr[data-id="wood"]');
   await sleep(200);
@@ -854,28 +964,12 @@ async function g17_inventory_full(page) {
 }
 
 async function g18_shift_multi(page) {
-  // 夹具：保存 auto → 把 units[1] 传送到 10m 外（避免点选重叠）→ reload
-  await clickDom(page, '#saveBtn');
-  await waitFor(page, () => { const el = document.getElementById('saveModal'); return el && getComputedStyle(el).display !== 'none'; }, '存档面板', 8000);
-  await clickDom(page, '.sbtn[data-slot="auto"][data-act="save"]');
-  await sleep(300);
-  await page.keyboard.press('Escape');
-  const inj = await page.evaluate(() => {
-    const raw = localStorage.getItem('wilderlands.save.auto');
-    if (!raw) return false;
-    const s = JSON.parse(raw);
-    if (!s.units || !s.units[1]) return false;
-    const u0 = s.units[0];
-    s.units[1].x = u0.x + 10;
-    s.units[1].z = u0.z + 3;
-    localStorage.setItem('wilderlands.save.auto', JSON.stringify(s));
-    localStorage.setItem('wilderlands.save.pending', 'auto');
-    return true;
+  // 夹具：单人开局下现场生成第 2 名队友到 10m 外（避免点选重叠；取代旧的存档传送）
+  await page.evaluate(() => {
+    const u = window.__GAME__.units[0];
+    window.__GAME__.addPlayer(u.x + 10, u.z + 3, '拓荒者·克莉');
   });
-  if (!inj) { check('Shift 多选', false, '夹具注入失败'); return; }
-  await page.reload();
-  await waitFor(page, () => window.__GAME_READY === true, '重载', 15000, 400);
-  await sleep(1000);
+  await sleep(400);
   await zoomOut(page);
   // 点选第 1 人
   if (!(await clickUnit(page, 0))) { check('Shift 多选', false, '选中失败'); return; }
@@ -916,49 +1010,115 @@ async function g19_import(page) {
   await waitFor(page, () => window.__GAME_READY === true && window.__GAME__.gold === 77, '导入生效', 20000, 400);
   const gold = (await gs(page)).gold;
   check('导入 JSON 存档（金币 77 生效）', gold === 77, 'gold=' + gold);
-  const lg = await logs(page);
-  check('导入后读档提示出现', lg.some((t) => t.includes('已读档') || t.includes('导入成功')), lg.slice(-2).join(' | '));
+  let lg = await logs(page);
+  for (let i = 0; i < 20 && !lg.some((t) => (t || '').includes('已读档') || (t || '').includes('导入成功')); i++) { await sleep(200); lg = await logs(page); }
+  check('导入后读档提示出现', lg.some((t) => (t || '').includes('已读档') || (t || '').includes('导入成功')), lg.slice(-2).join(' | '));
 }
 
 // ========== 主流程 ==========
 
 async function main() {
-  const { port, close } = await serve(join(root, 'dist'));
-  const browser = await chromium.launch();
-  const dbgCtx = await browser.newContext();
-  const dbgPage = await dbgCtx.newPage();
-  await dbgPage.setViewportSize(VW);
-  await dbgPage.goto(`http://127.0.0.1:${port}/index.html?debug=1`, { waitUntil: 'load' });
-  await dbgPage.waitForFunction(() => window.__GAME_READY === true, null, { timeout: 20000 });
-  resetCount();
-  console.log('\n=== G15 调试钩子 ?debug=1 ===');
-  await g15_debug(dbgPage);
-  const dOk = summary('G15');
-  allOk = allOk && dOk;
-  await dbgCtx.close();
+  const { port, close } = await serve(join(root, 'dist'), 8910);
+  const browser = await liveBrowser();
+  // WL_ONLY=G1,G5 按组过滤（调试二分用）；过滤时跳过 G15，除非点名
+  const ONLY = (process.env.WL_ONLY || '').split(',').map((s) => s.trim().toUpperCase()).filter(Boolean);
+  if (!ONLY.length || ONLY.some((o) => 'G15'.startsWith(o))) {
+    // G15 调试钩子要独占 ?debug=1 页面，单独串行
+    const dbgCtx = await browser.newContext();
+    const dbgPage = await dbgCtx.newPage();
+    await dbgPage.setViewportSize(VW);
+    await dbgPage.goto(`http://127.0.0.1:${port}/index.html?debug=1&nowolf=1${TURBO > 1 ? '&turbo=' + TURBO : ''}`, { waitUntil: 'load', timeout: 120000 });
+    await dbgPage.waitForFunction(() => window.__GAME_READY === true, null, { timeout: 120000 });
+    console.log('\n=== G15 调试钩子 ?debug=1 ===');
+    const dOk = await runInGroup('G15 调试钩子', async () => {
+      try { await g15_debug(dbgPage); } catch (e) { check('组执行无异常', false, String(e && e.message || e)); }
+      return summary('G15 调试钩子');
+    });
+    allOk = allOk && dOk;
+    await dbgCtx.close();
+  }
 
-  await group(browser, port, 'G1 点选与取消', g1_select);
-  await group(browser, port, 'G2 框选多选', g2_boxselect);
-  await group(browser, port, 'G3 移动命令', g3_move);
-  await group(browser, port, 'G4 采集树木', g4_gather, { slow: true });
-  await group(browser, port, 'G5 交易与锁定', g5_trade, { slow: true });
-  await group(browser, port, 'G6 面板互斥与 ESC', g6_panels, { slow: true, path: '?ship=1' });
-  await group(browser, port, 'G7 存档读档闭环', g7_save, { slow: true });
-  await group(browser, port, 'G8 招募流浪者', g8_recruit, { slow: true });
-  await group(browser, port, 'G9 模式/播种/建造', g9_modes);
-  await group(browser, port, 'G10 背包转移', g10_transfer);
-  await group(browser, port, 'G11 稳定性', g11_stability);
-  await group(browser, port, 'G12 修船主线通关', g12_ship, { slow: true, path: '?ship=1' });
-  await group(browser, port, 'G13 进食体力恢复', g13_food, { slow: true });
-  await group(browser, port, 'G14 野狼战斗', g14_wolf, { slow: true });
-  await group(browser, port, 'G16 岩石采集', g16_rock, { slow: true });
-  await group(browser, port, 'G17 背包满拒绝采集', g17_inventory_full, { slow: true });
-  await group(browser, port, 'G18 Shift 多选', g18_shift_multi);
-  await group(browser, port, 'G19 导入 JSON 存档', g19_import);
 
+/** G20 角色AI（change character-ai）：性格注入 → 闲时自治/发呆/当前行为文案/话痨吐槽 */
+async function g20_character_ai(page) {
+  await page.evaluate(() => {
+    const u = window.__GAME__.units[0];
+    // 把勤劳伙伴放在树旁 2 米（闲时自治只找领队 10 米内的活，出生点周围无资源属正常）
+    const t = window.__GAME__.targets.trees[0];
+    window.__GAME__.addPlayer(t.x + 2, t.z, '拓荒者·巴巴');
+    window.__GAME__.setPersonality(0, { combat: 'cautious', work: 'lazy', trait: 'quiet' });
+    window.__GAME__.setPersonality(1, { combat: 'cautious', work: 'hardworking', trait: 'talkative' });
+    window.__GAME__.setCamTarget(t.x, t.z);
+  });
+  await sleep(400);
+  await zoomOut(page);
+  // ① 勤劳伙伴闲时自派采集任务（2 秒游戏内扫描间隔）
+  let task = null;
+  for (let i = 0; i < 40 && !task; i++) {
+    task = (await gs(page)).units[1].task;
+    if (!task) await sleep(200);
+  }
+  check('勤劳伙伴闲时自动找活（gather）', task === 'gather', 'task=' + task);
+  // ② 懒惰主角全程不接活（继续观察几秒）
+  await sleep(1200);
+  const mainTask = (await gs(page)).units[0].task;
+  check('懒惰角色闲时发呆（无任务）', !mainTask, 'task=' + mainTask);
+  // ③ HUD「当前行为」文案跟随任务（点选正在干活的巴巴）
+  let action = '';
+  for (let tryN = 0; tryN < 3 && !action; tryN++) {
+    if (await clickUnit(page, 1)) {
+      await sleep(300);
+      action = await page.evaluate(() => (document.getElementById('curAction') || {}).textContent || '');
+      if (!['正在砍树', '正在采矿', '正在采浆果'].includes(action)) action = '';
+    } else await sleep(400);
+  }
+  check('HUD 当前行为文案随任务变化', !!action, 'action=' + action);
+  // ④ 话痨干活吐槽：日志出现「拓荒者·巴巴：」前缀行
+  let quip = false;
+  for (let i = 0; i < 60 && !quip; i++) {
+    const lg = await logs(page);
+    quip = lg.some((m) => (m || '').includes('拓荒者·巴巴：'));
+    if (!quip) await sleep(200);
+  }
+  check('话痨干活时吐槽（日志冒话）', quip);
+}
+
+  const GROUPS = [
+    ['G1 点选与取消', g1_select, {}],
+    ['G2 框选多选', g2_boxselect, {}],
+    ['G3 移动命令', g3_move, {}],
+    ['G4 采集树木', g4_gather, { slow: true }],
+    ['G5 交易与锁定', g5_trade, { slow: true }],
+    ['G6 面板互斥与 ESC', g6_panels, { slow: true, path: '?ship=1' }],
+    ['G7 存档读档闭环', g7_save, { slow: true }],
+    ['G8 招募流浪者', g8_recruit, { slow: true }],
+    ['G9 模式/播种/建造', g9_modes, {}],
+    ['G10 背包转移', g10_transfer, {}],
+    ['G11 稳定性', g11_stability, {}],
+    ['G12 修船主线通关', g12_ship, { slow: true, path: '?ship=1' }],
+    ['G13 进食体力恢复', g13_food, { slow: true }],
+    ['G14 野狼战斗', g14_wolf, { slow: true, wolves: true }],
+    ['G16 岩石采集', g16_rock, { slow: true }],
+    ['G17 背包满拒绝采集', g17_inventory_full, { slow: true }],
+    ['G18 Shift 多选', g18_shift_multi, {}],
+    ['G19 导入 JSON 存档', g19_import, {}],
+    ['G20 角色AI', g20_character_ai, {}],
+  ];
+  const t0 = Date.now();
+  const list = ONLY.length ? GROUPS.filter((g) => ONLY.some((o) => g[0].toUpperCase().startsWith(o))) : GROUPS;
+  console.log(`\n黑盒并行调度：${list.length} 组 × 并发 ${CONC} · turbo ×${TURBO}`);
+  let next = 0;
+  const worker = async () => {
+    while (next < list.length) {
+      const [name, fn, opts] = list[next++];
+      await group(browser, port, name, fn, opts);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(CONC, list.length) }, worker));
   await browser.close();
   close();
-  console.log('\n========== 黑盒测试总结果：' + (allOk ? '全部通过' : '存在失败') + ' ==========');
+  console.log(`\n黑盒耗时 ${((Date.now() - t0) / 1000).toFixed(1)}s（并发 ${CONC}，turbo ×${TURBO}）`);
+  console.log('========== 黑盒测试总结果：' + (allOk ? '全部通过' : '存在失败') + ' ==========');
   process.exit(allOk ? 0 : 1);
 }
 

@@ -56,27 +56,52 @@ export async function proj(page, x, z) {
   return page.evaluate(([px, pz]) => window.__GAME__.proj(px, pz), [x, z]);
 }
 
-/** 面板可见性（display block/flex 即视为可见） */
-export async function panelVisible(page, id) {
-  return page.evaluate((pid) => {
+/** 面板可见性：瞬时读 + 短轮询（HUD 每帧才同步 DOM，turbo/并发下瞬时读易撞帧间隙） */
+const VIS_FN = (pid) => {
+  const el = document.getElementById(pid);
+  if (!el) return false;
+  const d = getComputedStyle(el).display;
+  return d === 'block' || d === 'flex';
+};
+export async function panelVisible(page, id, timeout = 4000) {
+  if (await page.evaluate(VIS_FN, id)) return true;
+  return page.waitForFunction(VIS_FN, id, { timeout, polling: 100 }).then(() => true).catch(() => false);
+}
+export async function panelGone(page, id, timeout = 4000) {
+  const gone = (pid) => {
     const el = document.getElementById(pid);
-    if (!el) return false;
+    if (!el) return true;
     const d = getComputedStyle(el).display;
-    return d === 'block' || d === 'flex';
-  }, id);
+    return d !== 'block' && d !== 'flex';
+  };
+  if (await page.evaluate(gone, id)) return true;
+  return page.waitForFunction(gone, id, { timeout, polling: 100 }).then(() => true).catch(() => false);
 }
 
-/** 断言计数 */
-let pass = 0;
-let fail = 0;
-export function check(name, cond, extra = '') {
-  if (cond) { pass++; console.log('  \u2713 ' + name + (extra ? '  [' + extra + ']' : '')); }
-  else { fail++; console.log('  \u2717 ' + name + (extra ? '  [' + extra + ']' : '')); }
+/** 断言计数（AsyncLocalStorage 按组隔离：并行跑组时互不串扰；无组上下文归入汇总桶） */
+import { AsyncLocalStorage } from 'node:async_hooks';
+const als = new AsyncLocalStorage();
+const counts = new Map();
+function bucket() {
+  const g = als.getStore() || '_';
+  let c = counts.get(g);
+  if (!c) { c = { pass: 0, fail: 0 }; counts.set(g, c); }
+  return c;
 }
-export function resetCount() { pass = 0; fail = 0; }
+export function runInGroup(title, fn) { return als.run(title, fn); }
+export function check(name, cond, extra = '') {
+  const g = als.getStore();
+  const c = bucket();
+  const tag = g ? `[${g.split(' ')[0]}] ` : '';
+  if (cond) { c.pass++; console.log('  \u2713 ' + tag + name + (extra ? '  [' + extra + ']' : '')); }
+  else { c.fail++; console.log('  \u2717 ' + tag + name + (extra ? '  [' + extra + ']' : '')); }
+}
+export function resetCount() { counts.clear(); }
 export function summary(title) {
-  console.log(`\n== ${title}：${pass} 通过 / ${fail} 失败 ==`);
-  return fail === 0;
+  const own = counts.get(title);
+  const c = own || [...counts.values()].reduce((a, b) => ({ pass: a.pass + b.pass, fail: a.fail + b.fail }), { pass: 0, fail: 0 });
+  console.log(`\n== ${title}：${c.pass} 通过 / ${c.fail} 失败 ==`);
+  return c.fail === 0;
 }
 
 export function failFast(msg) {

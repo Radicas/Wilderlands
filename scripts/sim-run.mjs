@@ -32,16 +32,19 @@ const sim = await import('file://' + tmp);
 const {
   createSimWorld, simTick, simMove, simGatherTree, simGatherRock, simGatherBerry,
   simTrade, simSell, simDonateShip, simPlant, simBuildFence, simBuildHouse,
-  simRecruit, simBuySpear, simBuySeed, simEat, transferItem, MERCHANT_POS, CFG, setLogHandler,
+  simRecruit, simBuySpear, simBuySeed, simEat, simAttackWolf, transferItem, MERCHANT_POS, CFG, setLogHandler,
 } = sim;
 
 const verbose = process.argv.includes('--verbose');
 const allFails = [];
 let totalChecks = 0;
 
-/** 建一个确定性的独立世界（事件流接进世界自身） */
-function world(seed = 42) {
-  const w = createSimWorld(seed);
+/** 建一个确定性的独立世界（事件流接进世界自身；party=开局人数，默认按 config 单人，团队场景显式传 3） */
+function world(seed = 42, party) {
+  const w = createSimWorld(seed, party);
+  // 测试基线：性格中性化（谨慎/懒惰/安静），老场景不受闲时自治与遇狼反应干扰；
+  // 「16 · 角色AI」组显式设性格来验证行为层本身。
+  for (const p of w.players) p.personality = { combat: 'cautious', work: 'lazy', trait: 'quiet' };
   setLogHandler((m) => w.events.push(m));
   return w;
 }
@@ -81,7 +84,7 @@ const u1 = (w) => w.players[1];
 {
   const s = suite('1 · 世界初始化');
   const w = world();
-  s.ok(w.players.length === 3, '3 名拓荒者', `players=${w.players.length}`);
+  s.ok(w.players.length === 1 && u0(w).name === '拓荒者·罗恩', '单人开局（主角罗恩）', `players=${w.players.length}`);
   s.ok(w.wolves.length === 3, '3 头野狼');
   s.ok(w.trees.length === 220 && w.rocks.length === 90 && w.berries.length === 14,
     '资源数量（220 树 / 90 石 / 14 浆果）');
@@ -278,7 +281,7 @@ const u1 = (w) => w.players[1];
 // ============================================================
 {
   const s = suite('7 · 经济');
-  const w = world();
+  const w = world(42, 3); // 双人进食场景：显式 3 人开局（与默认单人开局正交）
   const ron = u0(w), kelly = u1(w);
   ron.hunger = 30; kelly.hunger = 40;
   ron.inv = { wood: 0, stone: 0, food: 2, seed: 0, berry: 1 };
@@ -288,10 +291,16 @@ const u1 = (w) => w.players[1];
   ron.hunger = 10;
   s.ok(simEat(w, [ron]), '单人浆果兜底成功');
   s.ok((ron.inv.berry ?? 0) === 0 && ron.hunger === 60, '浆果 -1、饥饿 10→60');
-  const wr = world();
-  wr.gold = 30; // 场景控制：凑够招募费
+  const wr = world(42, 3);
+  wr.gold = 30; // 场景控制：凑够招募费（但条件门还没过）
+  s.ok(!simRecruit(wr), '无屋顶拒绝招募（条件门）');
+  s.ok(wr.gold === 30 && wr.players.length === 3, '拒绝时不扣钱不加人');
+  wr.buildings.push({ type: 'house', x: 2, z: 2 }); // 屋顶到位
+  wr.players.forEach((u) => { u.inv.food = 0; u.inv.berry = 0; });
+  s.ok(!simRecruit(wr), '口粮不足拒绝招募（条件门）');
+  wr.players[0].inv.food = 6; // 余粮到位，三条件齐
   const g0 = wr.gold;
-  s.ok(simRecruit(wr), '招募流浪者');
+  s.ok(simRecruit(wr), '条件达成：招募流浪者');
   s.ok(wr.gold === g0 - CFG.recruitCost, '金币 -25', `${g0}→${wr.gold}`);
   s.ok(wr.players.length === 4, '第 4 人入队');
   s.ok(JSON.stringify(wr.players[3].inv) === '{}', '新队员空背包');
@@ -299,10 +308,11 @@ const u1 = (w) => w.players[1];
   s.ok(!simRecruit(wr), '招募后拒绝再次招募');
   tick(wr, CFG.wandererRespawn + 1);
   s.ok(wr.wanderer.available, '60 秒后新流浪者出现');
-  const wg = world();
+  const wg = world(42, 3); // 有屋顶+余粮（3人×食3=9≥5），只缺金币
+  wg.buildings.push({ type: 'house', x: 2, z: 2 });
   wg.gold = 10;
   s.ok(!simRecruit(wg), '金币不足拒绝招募');
-  const ws = world();
+  const ws = world(42, 3);
   const rs = u0(ws);
   const gs = ws.gold;
   s.ok(simBuySpear(ws, rs), '购买木矛');
@@ -319,7 +329,7 @@ const u1 = (w) => w.players[1];
 // ============================================================
 {
   const s = suite('8 · 战斗');
-  const w = world();
+  const w = world(42, 3); // 狼"追击落单者"：把另两人放倒传送走，只留罗恩
   const ron = u0(w);
   w.t = 0.3;
   u1(w).x = 100; u1(w).z = 100; u1(w).down = true;
@@ -451,7 +461,7 @@ const u1 = (w) => w.players[1];
 // ============================================================
 {
   const s = suite('12 · 背包转移与丢弃');
-  const w = world();
+  const w = world(42, 3); // 转移需双人
   const ron = u0(w), kelly = u1(w);
   ron.inv = { wood: 10, stone: 0, food: 0, seed: 0, berry: 0 };
   kelly.inv = { wood: 2, stone: 0, food: 0, seed: 0, berry: 0 };
@@ -483,6 +493,7 @@ const u1 = (w) => w.players[1];
         hasSpear: u.hasSpear, atkDmg: u.atkDmg,
         inv: { ...u.inv }, skills: { ...u.skills },
         attrs: { ...u.attrs },
+        personality: { ...u.personality }, mood: u.mood,
       })),
       buildings: w.buildings.map((b) => ({ type: b.type, x: b.x, z: b.z })),
       tiles: w.tiles.map((t) => ({ x: t.x, z: t.z, state: t.state, grow: t.grow })),
@@ -490,8 +501,8 @@ const u1 = (w) => w.players[1];
       ship: { wood: w.ship.wood, stone: w.ship.stone, done: w.ship.done },
     };
   }
-  // 造一个"进行中"世界（改满各种状态再收集）
-  const w = world();
+  // 造一个"进行中"世界（改满各种状态再收集；显式 3 人验多人存档闭环）
+  const w = world(42, 3);
   const ron = u0(w);
   w.gold = 77;
   w.t = 0.42;
@@ -499,6 +510,8 @@ const u1 = (w) => w.players[1];
   w.buildings.push({ type: 'house', x: 5, z: 5 });
   w.tiles[100].state = 3; w.tiles[100].grow = 1;
   ron.hp = 63; ron.hunger = 47;
+  ron.personality = { combat: 'timid', work: 'gatherer', trait: 'glutton' };
+  ron.mood = 'fear';
   ron.hasSpear = true; ron.atkDmg = 8;
   ron.inv = { wood: 12, stone: 0, food: 5, seed: 2, berry: 1 };
   ron.skills = { gather: 3, combat: 0, farm: 1 };
@@ -516,6 +529,8 @@ const u1 = (w) => w.players[1];
   s.ok(JSON.stringify(ru.inv) === JSON.stringify({ wood: 12, stone: 0, food: 5, seed: 2, berry: 1 }), '背包字段保留（含 0 键，collectSave 原样复制）', JSON.stringify(ru.inv));
   s.ok(JSON.stringify(ru.skills) === JSON.stringify({ gather: 3, combat: 0, farm: 1 }), '技能保留');
   s.ok(JSON.stringify(ru.attrs) === JSON.stringify({ stamina: 88, staminaXp: 5, vitalityXp: 0, atkXp: 0, defXp: 0 }), '属性字段保留');
+  s.ok(JSON.stringify(ru.personality) === JSON.stringify({ combat: 'timid', work: 'gatherer', trait: 'glutton' }) && ru.mood === 'fear', '⑩ 性格/情绪存档往返不重随', JSON.stringify(ru.personality) + '/' + ru.mood);
+  s.ok(restored.units.every((x) => ['aggressive', 'cautious', 'timid', 'stoic'].includes(x.personality.combat) && ['hardworking', 'lazy', 'gatherer', 'woodsman'].includes(x.personality.work) && ['talkative', 'quiet', 'glutton', 'tough'].includes(x.personality.trait)), '全员性格字段合法枚举');
   s.ok(restored.buildings.length === 1 && restored.buildings[0].type === 'house', '建筑保留');
   s.ok(restored.tiles[100].state === 3 && restored.tiles[100].grow === 1, '农田生长保留');
   s.ok(restored.wanderer.available === false && restored.wanderer.respawn === 30, '流浪者保留');
@@ -550,7 +565,7 @@ const u1 = (w) => w.players[1];
   tick(wh, 5);
   s.ok(rh.hp < hp0 && Math.abs(rh.hp - (hp0 - 5)) < 0.01, '饥饿掉血（0.1/tick，5 秒 -5）', `hp ${hp0}→${rh.hp.toFixed(2)}`);
   // 多人同采同一棵树：一人采完，另一人任务取消
-  const wt = world();
+  const wt = world(42, 3);
   wt.wolfSpawnDisabled = true; wt.wolves.length = 0;
   const r1 = u0(wt), r2 = u1(wt);
   const nearTree = [...wt.trees].sort((a, b) => Math.hypot(a.x - r1.x, a.z - r1.z) - Math.hypot(b.x - r1.x, b.z - r1.z))[0];
@@ -561,8 +576,8 @@ const u1 = (w) => w.players[1];
   s.ok(r1.task === null && r2.task === null, '两人同采任务都结束', `${r1.task?.type ?? 'null'}/${r2.task?.type ?? 'null'}`);
   s.ok(!nearTree.alive && (r1.inv.wood ?? 0) + (r2.inv.wood ?? 0) === (r1.inv.wood ?? 0) + 3,
     '树只被结算一次（产量不重复）', `wood=${(r1.inv.wood ?? 0) + (r2.inv.wood ?? 0)}`);
-  // 夜晚狼速：同距离下夜晚 3 秒追得更近
-  const wd = world();
+  // 夜晚狼速：同距离下夜晚 3 秒追得更近（3 人世界，另两人放倒传走只留罗恩）
+  const wd = world(42, 3);
   const rd = u0(wd);
   u1(wd).down = true; wd.players[2].down = true;
   u1(wd).x = 100; wd.players[2].x = 100;
@@ -571,7 +586,7 @@ const u1 = (w) => w.players[1];
   wd.t = 0.3; // 白天
   tick(wd, 3);
   const dayDist = wolfD.dist2(rd.x, rd.z);
-  const wn = world();
+  const wn = world(42, 3);
   const rn = u0(wn);
   u1(wn).down = true; wn.players[2].down = true;
   u1(wn).x = 100; wn.players[2].x = 100;
@@ -624,8 +639,8 @@ const u1 = (w) => w.players[1];
   s.ok(rc.hunger === 90, '进食饥饿 +50', `hunger=${rc.hunger}`);
   s.ok(rc.attrs.stamina === 90, '进食体力 +30', `stamina=${rc.attrs.stamina}`);
 
-  // 4) 体力 ≤20% → 移动 ×0.8（同起点同目标，10 秒后走得更近）
-  const wd = world();
+  // 4) 体力 ≤20% → 移动 ×0.8（同起点同目标，10 秒后走得更近；需双人对照）
+  const wd = world(42, 3);
   wd.wolfSpawnDisabled = true; wd.wolves.length = 0;
   const rd = u0(wd), kd = u1(wd);
   rd.x = kd.x = 0; rd.z = kd.z = 0;
@@ -693,6 +708,101 @@ const u1 = (w) => w.players[1];
   ri.maxHp = 100 + CFG.attrVitalityPerLv;
   ri.hp = ri.maxHp;
   s.ok(ri.maxHp === 105, '读档后生命力 Lv1 → maxHp 105', `maxHp=${ri.maxHp}`);
+  s.run();
+}
+
+
+// 16 · 角色AI（spec 011 / openspec change character-ai：行为层十条）
+{
+  const s = suite('16 · 角色AI（spec 011）');
+
+  // ① 同 seed 同性格（确定性分配，直接用 createSimWorld 不中性化）
+  const a1 = createSimWorld(7), a2 = createSimWorld(7);
+  const pa = a1.players.map((p) => JSON.stringify(p.personality)).join('|');
+  const pb = a2.players.map((p) => JSON.stringify(p.personality)).join('|');
+  s.ok(pa === pb && pa.length > 0, '① 同种子同性格（不重随）', pa);
+
+  const parkWolves = (w) => { for (let i = 0; i < w.wolves.length; i++) { const wl = w.wolves[i]; wl.down = false; wl.dead = false; wl.x = 900 + i; wl.z = 900; } };
+
+  // ② 莽夫遇狼迎上
+  const w2 = world(); w2.wolfSpawnDisabled = true; parkWolves(w2);
+  const r2 = u0(w2); r2.x = 30; r2.z = 30;
+  r2.personality = { combat: 'aggressive', work: 'lazy', trait: 'quiet' };
+  w2.wolves[0].x = 34; w2.wolves[0].z = 30;
+  tick(w2, 2.3);
+  s.ok(r2.task && r2.task.type === 'attack', '② 莽夫遇狼主动迎战', r2.task ? r2.task.type : 'null');
+
+  // ③ 胆小遇狼逃向最近队友
+  const w3 = world(42, 3); w3.wolfSpawnDisabled = true; parkWolves(w3);
+  const r3 = u0(w3); r3.x = 30; r3.z = 30;
+  const al3 = u1(w3); al3.x = 35; al3.z = 30;
+  w3.players[2].x = 40; w3.players[2].z = 30;
+  r3.personality = { combat: 'timid', work: 'lazy', trait: 'quiet' };
+  w3.wolves[0].x = 26; w3.wolves[0].z = 30;
+  tick(w3, 2.3);
+  s.ok(r3.task && r3.task.type === 'move' && Math.abs(r3.task.pos.x - 35) < 1e-9, '③ 胆小遇狼逃向队友', JSON.stringify(r3.task));
+
+  // ④ 命令压过性格：下令后胆小鬼也冲（攻击不被自主逻辑改回逃跑）
+  const w4 = world(); w4.wolfSpawnDisabled = true; parkWolves(w4);
+  const r4 = u0(w4); r4.x = 30; r4.z = 30;
+  r4.personality = { combat: 'timid', work: 'lazy', trait: 'quiet' };
+  w4.wolves[0].x = 34; w4.wolves[0].z = 30;
+  simAttackWolf(w4, r4, 0);
+  tick(w4, 3);
+  s.ok(r4.task && r4.task.type === 'attack' && w4.wolves[0].hp < CFG.wolfHp, '④ 玩家命令压过性格（胆小也冲锋）', `task=${r4.task ? r4.task.type : 'null'} wolPhp=${w4.wolves[0].hp.toFixed(1)}`);
+
+  // ⑤ 勤劳闲时自派活
+  const w5 = world(); w5.wolfSpawnDisabled = true; w5.wolves.length = 0;
+  const r5 = u0(w5);
+  const t5 = w5.trees.findIndex((t) => t.alive);
+  r5.x = w5.trees[t5].x + 2; r5.z = w5.trees[t5].z;
+  r5.personality = { combat: 'cautious', work: 'hardworking', trait: 'quiet' };
+  tick(w5, 2.1);
+  s.ok(r5.task && r5.task.type === 'gather', '⑤ 勤劳者闲时自派采集活', r5.task ? r5.task.type : 'null');
+
+  // ⑥ 懒惰闲时发呆
+  const w6 = world(); w6.wolfSpawnDisabled = true; w6.wolves.length = 0;
+  const r6 = u0(w6);
+  r6.personality = { combat: 'cautious', work: 'lazy', trait: 'quiet' };
+  tick(w6, 6);
+  s.ok(r6.task === null, '⑥ 懒惰者闲时不找活', String(r6.task));
+
+  // ⑦ 被咬→害怕：工作 ×0.8 + 变化才记一条日志
+  const w7 = world(); w7.wolfSpawnDisabled = true; parkWolves(w7);
+  const r7 = u0(w7); r7.x = 30; r7.z = 30;
+  r7.personality = { combat: 'cautious', work: 'lazy', trait: 'quiet' };
+  w7.wolves[0].x = 33; w7.wolves[0].z = 30;
+  r7.takeDamage(3, w7.wolves[0]);
+  const t7 = w7.trees.findIndex((t) => t.alive);
+  r7.task = { type: 'gather', kind: 'tree', target: t7, pos: { x: r7.x, z: r7.z }, workT: 0, workDur: 2.2 };
+  tick(w7, 2.5); // 害怕 ×0.8 → 只攒 2.0（中性早该完成）；狼在场+离摊远+独行 → 恐惧不退
+  const fearLogs = w7.events.filter((m) => m.includes('害怕')).length;
+  s.ok(r7.mood === 'fear' && r7.task && r7.task.type === 'gather' && r7.inv.wood === 3 && fearLogs === 1,
+    '⑦ 被咬→害怕：效率×0.8 且日志只一条', `mood=${r7.mood} wood=${r7.inv.wood} fearLogs=${fearLogs}`);
+
+  // ⑧ 饥饿→烦躁→进食消除
+  const w8 = world(); w8.wolfSpawnDisabled = true; w8.wolves.length = 0;
+  const r8 = u0(w8);
+  r8.personality = { combat: 'cautious', work: 'lazy', trait: 'quiet' };
+  r8.hunger = 15;
+  tick(w8, 1.2);
+  const irritable = r8.mood === 'irritable';
+  r8.inv = { ...r8.inv, food: 2 };
+  simEat(w8, [r8]);
+  tick(w8, 1.2);
+  s.ok(irritable && r8.hunger > 40 && r8.mood === 'neutral', '⑧ 饥饿烦躁，进食消除', `irritable=${irritable} hunger=${r8.hunger} mood=${r8.mood}`);
+
+  // ⑨ 玩家命令取消自派的闲时任务
+  const w9 = world(); w9.wolfSpawnDisabled = true; w9.wolves.length = 0;
+  const r9 = u0(w9);
+  const t9 = w9.trees.findIndex((t) => t.alive);
+  r9.x = w9.trees[t9].x + 2; r9.z = w9.trees[t9].z;
+  r9.personality = { combat: 'cautious', work: 'hardworking', trait: 'quiet' };
+  tick(w9, 2.1);
+  const hadTask = !!r9.task && r9.task.type === 'gather';
+  simMove(w9, r9, r9.x + 3, r9.z);
+  s.ok(hadTask && r9.task && r9.task.type === 'move', '⑨ 玩家命令即覆盖自派任务', `hadTask=${hadTask} now=${r9.task ? r9.task.type : 'null'}`);
+
   s.run();
 }
 
