@@ -320,6 +320,92 @@ async function g22_unit_animation(page) {
 
 }
 
+async function g23_forest_life(page) {
+  await page.evaluate(() => {
+    window.__GAME__.setPersonality(0, { combat: 'cautious', work: 'lazy', trait: 'quiet' });
+  });
+  await zoomOut(page);
+
+  // ① 生态基线：~150 棵、三树种齐、两树间距 ≥3.2m（页内全对扫描）
+  const eco = await page.evaluate(() => {
+    const ts = window.__GAME__.targets.trees;
+    const sp = [0, 0, 0];
+    let minGap = Infinity;
+    for (const t of ts) sp[t.species]++;
+    for (let i = 0; i < ts.length; i++) for (let j = i + 1; j < ts.length; j++) {
+      const d = Math.hypot(ts[i].x - ts[j].x, ts[i].z - ts[j].z);
+      if (d < minGap) minGap = d;
+    }
+    return { n: ts.length, sp, minGap };
+  });
+  check('疏林 ~150 棵（拒绝采样生效）', eco.n >= 140 && eco.n <= 150, 'n=' + eco.n);
+  check('三树种共存（松50/橡25/桦25）', eco.sp[0] >= 65 && eco.sp[1] >= 30 && eco.sp[2] >= 30, 'sp=' + eco.sp.join('/'));
+  check('两树最小间距 ≥3.2m', eco.minGap >= 3.2 - 1e-6, 'minGap=' + eco.minGap.toFixed(2));
+
+  // ② 生长循环：砍倒松树 → stump（targets 消失）→ sprout 再现 → 45s 内回 mature 可再砍
+  if (await clickUnit(page, 0)) {
+    const pine = await nearest(page, 'trees', (await gs(page)).units[0].x, (await gs(page)).units[0].z, 25);
+    const ptree = (await page.evaluate(() => window.__GAME__.targets.trees.find((t) => t.species === 0 && t.phase === 'mature')) || pine);
+    if (ptree) {
+      await page.evaluate(([x, z]) => { window.__GAME__.setPos(0, x - 2, z); window.__GAME__.setCamTarget(x, z); }, [ptree.x, ptree.z]);
+      await sleep(500);
+      const gotCmd = await rightClickEntity(page, ptree.x, ptree.z, ['gather'], 600);
+      const gone = gotCmd && await waitFor(page, ([x, z]) => !window.__GAME__.targets.trees.some((t) => Math.hypot(t.x - x, t.z - z) < 0.5), '树桩空窗', 30000, 250, [ptree.x, ptree.z]);
+      const sprout = gone && await waitFor(page, ([x, z]) => { const t = window.__GAME__.targets.trees.find((tt) => Math.hypot(tt.x - x, tt.z - z) < 0.5); return t && (t.phase === 'sprout' || t.phase === 'young'); }, '冒出新芽', 20000, 250, [ptree.x, ptree.z]);
+      // ③ 趁幼苗在场验证免砍门（成材后样本即消失）
+      if (sprout) {
+        // 幼苗实体矮（0.22-0.55 缩放），页内低高度多档右键直击本体
+        await page.evaluate(([x, z]) => {
+          const g = window.__GAME__;
+          for (const h of [0.4, 0.65, 1.5, 1.9]) g.rightClickWorld(x, z, h); // 幼苗冠心0.64 / 小树冠心1.6 双阶段覆盖
+        }, [ptree.x, ptree.z]);
+        const lines = await logs(page);
+        const refused = (await page.evaluate(() => window.__GAME__.units[0].task !== 'gather')) && lines.some((l) => l.includes('还太小'));
+        check('幼树免砍门（拒绝+提示文案）', refused, 'task=' + JSON.stringify(await page.evaluate(() => window.__GAME__.units[0].task)));
+      }
+      const mature = sprout && await waitFor(page, ([x, z]) => { const t = window.__GAME__.targets.trees.find((tt) => Math.hypot(tt.x - x, tt.z - z) < 0.5); return !!t && t.phase === 'mature'; }, '松树成材', 40000, 300, [ptree.x, ptree.z]);
+      check('砍后循环：空窗→新芽→成材（松45s）', !!mature, 'cmd=' + gotCmd);
+      // ③ 成材后再砍得动
+      await clickUnit(page, 0);
+      const again = await rightClickEntity(page, ptree.x, ptree.z, ['gather'], 600);
+      check('成材后重新可采', !!again);
+    } else check('砍后循环：空窗→新芽→成材（松45s）', false, '找不到成树').valueOf();
+  } else { check('砍后循环：空窗→新芽→成材（松45s）', false, '无法选中主角'); }
+
+  // ⑤ 橡/桦产量：传送到近旁右键，背包木材增量 == 4/2
+  for (const [want, species, label] of [[1, 4, '橡树 +4'], [2, 2, '白桦 +2']]) {
+    const t = await page.evaluate((s) => {
+      const g = window.__GAME__;
+      const u = g.units[0];
+      const c = g.targets.trees.filter((x) => x.species === s && x.phase === 'mature')
+        .sort((a, b) => Math.hypot(a.x - u.x, a.z - u.z) - Math.hypot(b.x - u.x, b.z - u.z))[0];
+      return c || null;
+    }, want);
+    if (!t) { check('产量按树种（' + label + '）', false, '无成材样本').valueOf(); continue; }
+    await page.evaluate(([x, z]) => { window.__GAME__.setPos(0, x - 2, z); window.__GAME__.setCamTarget(x, z); }, [t.x, t.z]);
+    await sleep(400);
+    if (!(await clickUnit(page, 0))) continue;
+    const w0 = await page.evaluate(() => window.__GAME__.invs[0].inv.wood ?? 0);
+    const HBySp = [[1.0, 1.5, 2.0], [1.5, 2.0, 2.4], [2.7, 3.1, 3.5]]; // 各树种冠心高度
+    const cmd = await page.evaluate(([x, z, hs]) => {
+      const g = window.__GAME__;
+      for (const h of hs) {
+        g.rightClickWorld(x, z, h);
+        if ((g.units.find((u) => u.selected) || {}).task === 'gather') return true; // commandAt 同帧生效
+      }
+      return false;
+    }, [t.x, t.z, HBySp[want]]);
+    let delta = false;
+    let diag = '';
+    if (cmd) {
+      const got = await waitFor(page, ([bw]) => ((window.__GAME__.invs[0].inv.wood ?? 0) - bw) !== 0, '产量入账', 20000, 250, [w0]);
+      delta = got ? await page.evaluate(([bw]) => (window.__GAME__.invs[0].inv.wood ?? 0) - bw, [w0]) : false;
+      if (!delta) diag = JSON.stringify(await page.evaluate(() => ({ task: window.__GAME__.units[0].task, anim: window.__GAME__.animState(0), wood: window.__GAME__.invs[0].inv.wood ?? 0 })));
+    }
+    check('产量按树种（' + label + '）', delta === species, 'Δ=' + delta + ' cmd=' + cmd + ' ' + diag);
+  }
+}
+
 async function group(browser, port, name, fn, opts = {}) {
   console.log('\n=== ' + name + (opts.slow ? ' [slow]' : '') + ' ===');
   const qs = new URLSearchParams(opts.path ? opts.path.replace(/^\?/, '') : '');
@@ -1216,12 +1302,13 @@ async function g20_character_ai(page) {
   check('HUD 当前行为文案随任务变化', !!act, 'sel=' + sel1 + ' action=' + act);
   // ④ 话痨干活吐槽：日志出现「拓荒者·巴巴：」前缀行
   let quip = false;
-  for (let i = 0; i < 150 && !quip; i++) {
+  for (let i = 0; i < 300 && !quip; i++) { // 并发批里 G23 类重组会饥饿帧预算，窗口放宽到 ~30s 真实
     const lg = await logs(page);
     quip = lg.some((m) => (m || '').includes('拓荒者·巴巴：'));
-    if (!quip) await sleep(80);
+    if (!quip) await sleep(100);
   }
-  check('话痨干活时吐槽（日志冒话）', quip);
+  const qtask = quip ? '' : ' task=' + JSON.stringify((await gs(page)).units[1].task);
+  check('话痨干活时吐槽（日志冒话）', quip, qtask);
 }
 
   const GROUPS = [
@@ -1246,11 +1333,12 @@ async function g20_character_ai(page) {
     ['G20 角色AI', g20_character_ai, {}],
     ['G21 收获反馈', g21_gather_feedback, {}],
     ['G22 动画生命感', g22_unit_animation, { turbo: 1, wolves: true, serial: true }],
+    ['G23 森林生态', g23_forest_life, { serial: true }], // 生长循环依赖游戏时间（stump+2×stage≈45s），并发帧饥饿会导致窗口不足
   ];
   const t0 = Date.now();
   const list = ONLY.length ? GROUPS.filter((g) => ONLY.some((o) => g[0].toUpperCase().startsWith(o))) : GROUPS;
   console.log(`\n黑盒并行调度：${list.length} 组 × 并发 ${CONC} · turbo ×${TURBO}`);
-  const runPool = async (items) => {
+  const runPool = async (items, size = CONC) => {
     let next = 0;
     const worker = async () => {
       while (next < items.length) {
@@ -1258,10 +1346,10 @@ async function g20_character_ai(page) {
         await group(browser, port, name, fn, opts);
       }
     };
-    await Promise.all(Array.from({ length: Math.min(CONC, items.length) }, worker));
+    await Promise.all(Array.from({ length: Math.min(size, items.length) }, worker));
   };
-  // 串行组先清场独跑：动画采样/低帧率敏感断言在满载页面上物理等不起
-  await runPool(list.filter((g) => g[2].serial));
+  // 串行组先清场独跑（size=1 真串行）：动画采样/游戏时间敏感断言在满载页面上物理等不起
+  await runPool(list.filter((g) => g[2].serial), 1);
   await runPool(list.filter((g) => !g[2].serial));
   await browser.close();
   close();

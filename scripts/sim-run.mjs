@@ -32,9 +32,10 @@ const sim = await import('file://' + tmp);
 const {
   createSimWorld, simTick, simMove, simGatherTree, simGatherRock, simGatherBerry,
   simTrade, simSell, simDonateShip, simPlant, simBuildFence, simBuildHouse,
-  simRecruit, simBuySpear, simBuySeed, simEat, simAttackWolf, transferItem, MERCHANT_POS, CFG, setLogHandler,
+  simRecruit, simBuySpear, simBuySeed, simEat, simAttackWolf, transferItem, MERCHANT_POS, CFG, TREES, setLogHandler,
 } = sim;
 
+const WORLD_MIN_GAP = 3.2;
 const verbose = process.argv.includes('--verbose');
 const allFails = [];
 let totalChecks = 0;
@@ -86,8 +87,20 @@ const u1 = (w) => w.players[1];
   const w = world();
   s.ok(w.players.length === 1 && u0(w).name === '拓荒者·罗恩', '单人开局（主角罗恩）', `players=${w.players.length}`);
   s.ok(w.wolves.length === 3, '3 头野狼');
-  s.ok(w.trees.length === 220 && w.rocks.length === 90 && w.berries.length === 14,
-    '资源数量（220 树 / 90 石 / 14 浆果）');
+  s.ok(w.trees.length === 150 && w.rocks.length === 90 && w.berries.length === 14,
+    '资源数量（150 疏林 / 90 石 / 14 浆果）');
+  {
+    const sp = [0, 0, 0];
+    let minGap = Infinity;
+    for (let i = 0; i < w.trees.length; i++) {
+      sp[w.trees[i].species]++;
+      for (let j = i + 1; j < w.trees.length; j++) minGap = Math.min(minGap, Math.hypot(w.trees[i].x - w.trees[j].x, w.trees[i].z - w.trees[j].z));
+    }
+    s.ok(sp[0] >= 70 && sp[0] <= 80 && sp[1] >= 32 && sp[1] <= 42 && sp[2] === 150 - sp[0] - sp[1],
+      '树种占比 松~50%/橡~25%/桦~25%', `${sp.join('/')}`);
+    s.ok(minGap >= WORLD_MIN_GAP - 1e-9, '两树间距 ≥3.2m', `minGap=${minGap.toFixed(2)}`);
+    s.ok(w.trees.every((t) => t.phase === 'mature'), '开局全成树（旧行为兼容）');
+  }
   s.ok(w.tiles.length === 48 * 48, '地块网格 48×48', `tiles=${w.tiles.length}`);
   s.ok(w.gold === 20, '公共金币 20');
   s.ok(JSON.stringify(u0(w).inv) === JSON.stringify({ wood: 3, stone: 2, food: 3, seed: 1, berry: 0 }),
@@ -171,10 +184,30 @@ const u1 = (w) => w.players[1];
   simGatherTree(wt, ron, 0);
   tick(wt, 25);
   s.ok((ron.inv.wood ?? 0) === w0 + CFG.woodPerTree, '砍树 wood +3', `${w0}→${ron.inv.wood}`);
-  s.ok(!tree.alive, '树被砍倒');
   s.ok(ron.skills.gather >= 1, '采集经验 +1', `gather=${ron.skills.gather}`);
-  tick(wt, 46);
-  s.ok(tree.alive, '树 45 秒后重生');
+  // —— forest-life 生长循环：树桩→幼苗→小树→成树（松 45s 等长旧重生）——
+  s.ok(tree.phase === 'stump' || tree.phase === 'sprout', '砍后进入树桩/幼苗期', `phase=${tree.phase}`);
+  ron.task = null;
+  simGatherTree(wt, ron, 0);
+  s.ok(ron.task === null, '非成树免砍门（不下任务）');
+  tick(wt, 40);
+  s.ok(tree.phase === 'mature' && tree.alive, '松树 45s 成材循环走完', `phase=${tree.phase}`);
+  {
+    // 橡/桦产量差（就近瞬移起步，避免长途）
+    const oak = wt.trees.find((t) => t.species === 1 && t.phase === 'mature');
+    const bi = wt.trees.findIndex((t) => t === oak);
+    ron.x = oak.x - 1; ron.z = oak.z;
+    const b1 = ron.inv.wood ?? 0;
+    simGatherTree(wt, ron, bi);
+    tick(wt, 6);
+    s.ok((ron.inv.wood ?? 0) - b1 === TREES[1].wood, '橡树产量 +4', `Δ${(ron.inv.wood ?? 0) - b1}`);
+    const birch = wt.trees.find((t) => t.species === 2 && t.phase === 'mature');
+    ron.x = birch.x - 1; ron.z = birch.z;
+    const b2 = ron.inv.wood ?? 0;
+    simGatherTree(wt, ron, wt.trees.indexOf(birch));
+    tick(wt, 5);
+    s.ok((ron.inv.wood ?? 0) - b2 === TREES[2].wood, '白桦产量 +2', `Δ${(ron.inv.wood ?? 0) - b2}`);
+  }
   const wr = world();
   const rk = u0(wr);
   const rock = [...wr.rocks].sort((a, b) => Math.hypot(a.x - rk.x, a.z - rk.z) - Math.hypot(b.x - rk.x, b.z - rk.z))[0];
@@ -446,7 +479,7 @@ const u1 = (w) => w.players[1];
   for (let i = 0; i < 3; i++) {
     // 就近选活树（连续固定索引可能跨全图，25 秒走不到）
     const near = [...w.trees]
-      .filter((t) => t.alive)
+      .filter((t) => t.alive && t.phase === 'mature')
       .sort((a, b) => Math.hypot(a.x - ron.x, a.z - ron.z) - Math.hypot(b.x - ron.x, b.z - ron.z))[0];
     simGatherTree(w, ron, w.trees.indexOf(near));
     tick(w, 25);
@@ -572,10 +605,11 @@ const u1 = (w) => w.players[1];
   const tIdx = wt.trees.indexOf(nearTree);
   simGatherTree(wt, r1, tIdx);
   simGatherTree(wt, r2, tIdx);
-  tick(wt, 25);
+  tick(wt, 20); // 必须落在 stump 窗口（砍倒≈7-11s + 树桩 15s ≈ 22-26s；旧口径 25s 已冒苗 alive 翻真）
   s.ok(r1.task === null && r2.task === null, '两人同采任务都结束', `${r1.task?.type ?? 'null'}/${r2.task?.type ?? 'null'}`);
-  s.ok(!nearTree.alive && (r1.inv.wood ?? 0) + (r2.inv.wood ?? 0) === (r1.inv.wood ?? 0) + 3,
-    '树只被结算一次（产量不重复）', `wood=${(r1.inv.wood ?? 0) + (r2.inv.wood ?? 0)}`);
+  const total14 = (r1.inv.wood ?? 0) + (r2.inv.wood ?? 0);
+  s.ok(nearTree.phase === 'stump' && !nearTree.alive && total14 - 6 === TREES[nearTree.species].wood,
+    '树只被结算一次（产量不重复，3+3 起步仅一人得产）', `wood=${total14} sp=${nearTree.species} phase=${nearTree.phase}`);
   // 夜晚狼速：同距离下夜晚 3 秒追得更近（3 人世界，另两人放倒传走只留罗恩）
   const wd = world(42, 3);
   const rd = u0(wd);
