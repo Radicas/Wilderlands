@@ -166,6 +166,19 @@ export const START_GOLD = 20;
 
 /** 每名拓荒者初始背包（招募的第 4 人空背包） */
 // —— 场景几何（视觉比例单一来源）：角色身高 ≈1.78，树 ≈2.7 倍人高，石 ≈1.9m 巨石 ——
+/** 声音层（change sound-system）：音量/节流/点缀间隔。全部真实秒，表现层专用 */
+export const SOUND = {
+  master: 0.5,
+  /** 同名音效节流窗（秒，真实时间）——turbo 防炸音（D5） */
+  throttle: 0.2,
+  dayWindHz: 520, nightWindHz: 240,
+  windGain: 0.018, windGainNight: 0.014,
+  bedFade: 2.5,
+  birdGap: [2, 6] as [number, number],
+  cricketGap: [1.5, 4] as [number, number],
+  howlGap: [20, 60] as [number, number],
+};
+
 /** 树种生态表（forest-life D1）：产量/工时/成材总时长（含树桩期）单一来源。
  *  index 即 species：0 松（回归锚，与旧版数值全等）/ 1 橡（慢工粗木）/ 2 桦（快长薄产） */
 export const TREES = [

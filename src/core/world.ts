@@ -9,6 +9,7 @@ import { CFG, PALETTE, SCENE, TREE_STAGE_SCALE, WORLD, WANDERER_NAMES } from '..
 import type { BerryEnt, RockEnt, Tile, TreeEnt, TreeMats, WandererEnt } from '../types';
 import { berries, interMeshes, merchantPos, rocks, setWanderer, shop, tiles, trees } from '../state';
 import { scene } from './renderer';
+import { sfx } from './sound';
 import { TILE, GRID, noise2D, groundHeightAt } from '../sim/terrain';
 
 export { TILE, GRID, noise2D, groundHeightAt };
@@ -178,6 +179,7 @@ function applyTreeVisible(id: number, v: boolean): void {
     // 进入 0.4s 下沉缩小补间（从当前阶段矩阵起步——砍小树也正确下沉）
     const m = tree.mats[tree.phase];
     dyingTrees.push({ tree, t: 0, trunk: readTransform(m.trunk), crown: readTransform(m.crown) });
+    sfx('thud'); // 倒木沙沙（sound-system）
   }
 }
 

@@ -3,6 +3,7 @@
  * 初始化世界、小队、UI 与输入，驱动主循环。
  */
 import * as THREE from 'three';
+import { setBed, soundStats, soundTick, unlockSound } from './core/sound';
 import { CFG } from './config';
 import { renderer, scene, camera, updateCamera, resize, updateCameraMove, cam } from './core/renderer';
 import { buildBerries, buildGround, buildMerchant, buildRocks, buildTrees, buildWanderer } from './core/world';
@@ -102,6 +103,7 @@ function stepGame(dt: number): void {
 function loop(): void {
   requestAnimationFrame(loop);
   const real = Math.min(clock.getDelta(), 0.05);
+  soundTick(); // 床层点缀排程走真实时间（sound-system D6，自差分免疫 dt 钳制）
 
   updateCameraMove(keys, real);
   if (TURBO === 1) stepGame(real);
@@ -137,6 +139,9 @@ if (new URLSearchParams(location.search).get('nowolf') === '1') disableWolves();
 
 // 只读调试句柄（自动化验证 / 开发自检用，与 __GAME_READY 同模式）
 initFloaters();
+window.addEventListener('pointerdown', unlockSound, { once: true });
+setBed(timeOfDay.isNight);
+
 (window as unknown as { __GAME__: unknown }).__GAME__ = {
   get gold() {
     return gold;
@@ -226,6 +231,21 @@ initFloaters();
     return players.length;
   },
   /** 自动化验证夹具：注入固定性格（黑盒确定性：同性格同行为，绕开随机三维度） */
+  setTime(t: number) {
+    timeOfDay.t = t;
+  },
+  /** 选中者当前任务目标的世界坐标（拾取正确性断言用，sound/g23 夹具族） */
+  get taskTarget(): { x: number; z: number } | null {
+    const u = selected[0] ?? players[0];
+    const tg = u?.task?.target as unknown as { p?: THREE.Vector3; x?: number; z?: number } | undefined;
+    if (!tg) return null;
+    if (tg.p) return { x: tg.p.x, z: tg.p.z };
+    if (typeof tg.x === 'number' && typeof tg.z === 'number') return { x: tg.x, z: tg.z };
+    return null;
+  },
+  soundStats() {
+    return soundStats();
+  },
   leftClickWorld(x: number, z: number, height = 1) {
     const canvas = document.querySelector('canvas') as HTMLCanvasElement;
     const rect = canvas.getBoundingClientRect();

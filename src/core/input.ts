@@ -3,6 +3,7 @@
  * 键盘（WASD/QE/数字键/F）、鼠标（左键框选/点选、右键命令、中键旋转、滚轮缩放）
  */
 import { cam, renderer, updateCameraMove } from './renderer';
+import { toggleMuted } from './sound';
 import { boxSelect, commandAt, selectAt, toNDC, touchAction } from '../systems/commands';
 import { eatFood } from '../systems/economy';
 import { setMode } from '../state';
@@ -140,6 +141,7 @@ export function initInput(): void {
       else setMode(0);
     }
     if (e.code === 'KeyF') eatFood();
+    if (e.code === 'KeyM') toggleMuted();
     keys[e.code] = true;
     shiftKey = e.shiftKey;
   });

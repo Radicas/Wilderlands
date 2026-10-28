@@ -4,6 +4,7 @@
  * 完成判定为纯函数，可被 node 自动回归。本模块无 DOM/three 依赖。
  */
 import { CFG } from '../config';
+import { sfx } from '../core/sound';
 import { logMsg } from './log';
 
 /** 主线修船状态（持久，进存档 v3） */
@@ -17,7 +18,7 @@ export function shipReady(wood: number, stone: number): boolean {
 /** 完成态持久化切换（唯一写入口） */
 export function completeShip(): void {
   ship.done = true;
-  logMsg('咣当！破船翻正了——主线达成。');
+  sfx('win'); logMsg('咣当！破船翻正了——主线达成。');
 }
 
 /** 投入材料；返回是否成功（不校验距离，距离由 UI 层把关） */

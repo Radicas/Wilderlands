@@ -3,6 +3,7 @@
  * 消息日志、资源栏（金币 + 小队合计）、选中角色面板（含个人背包 + 转移交互）、模式按钮、新手提示。
  */
 import { CFG, ITEMS, SKILL_LABELS } from '../config';
+import { isMuted, onMutedChange, toggleMuted } from '../core/sound';
 import type { ItemId, SkillId, Unit } from '../types';
 import { gold, modeNow, players, selected, setLogHandler, setMode } from '../state';
 import { invCount, invRatio, invTotal, transferItem } from '../systems/inventory';
@@ -29,6 +30,15 @@ function logMsgImpl(s: string): void {
 setLogHandler(logMsgImpl);
 
 export function initHUD(): void {
+  // 静音钮（D7）：注入右上区，随状态换字
+  const mb = document.createElement('button');
+  mb.id = 'muteBtn';
+  mb.textContent = isMuted() ? '🔇' : '🔊';
+  mb.style.cssText = 'position:fixed;right:12px;top:12px;z-index:60;background:#0008;border:1px solid #6b5;padding:3px 8px;color:#cde8b8;border-radius:6px;cursor:pointer;font-size:14px';
+  mb.addEventListener('click', () => toggleMuted());
+  document.body.appendChild(mb);
+  onMutedChange((m) => { mb.textContent = m ? '🔇' : '🔊'; });
+
   // 模式切换按钮（点击 = 数字键 1-4）
   document.querySelectorAll('.mbtn').forEach((b) => {
     b.addEventListener('click', () => setMode(Number((b as HTMLElement).dataset.m)));

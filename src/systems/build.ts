@@ -3,6 +3,7 @@
  * 围栏（边界）与木屋（休息回血）。
  */
 import * as THREE from 'three';
+import { sfx } from '../core/sound';
 import { CFG, PALETTE } from '../config';
 import type { Unit } from '../types';
 import { buildings, logMsg } from '../state';
@@ -16,11 +17,11 @@ export function nearBuilding(p: THREE.Vector3): boolean {
 
 export function buildFence(p: THREE.Vector3, from: Unit): boolean {
   if (!invRemove(from, 'wood', CFG.fenceCost)) {
-    logMsg('木材不足（围栏需 2）');
+    sfx('ref'); logMsg('木材不足（围栏需 2）');
     return false;
   }
   placeFenceAt(p);
-  logMsg('建造围栏，木材 -' + CFG.fenceCost);
+  sfx('build'); logMsg('建造围栏，木材 -' + CFG.fenceCost);
   return true;
 }
 
@@ -46,17 +47,17 @@ export function placeFenceAt(p: THREE.Vector3): void {
 
 export function buildHouse(p: THREE.Vector3, from: Unit): boolean {
   if (!invRemove(from, 'wood', CFG.houseCostWood)) {
-    logMsg('木屋需要木材 10 + 石头 5');
+    sfx('ref'); logMsg('木屋需要木材 10 + 石头 5');
     return false;
   }
   if (!invRemove(from, 'stone', CFG.houseCostStone)) {
     // 回滚已扣的木材
     from.inv.wood = (from.inv.wood ?? 0) + CFG.houseCostWood;
-    logMsg('木屋需要木材 10 + 石头 5');
+    sfx('ref'); logMsg('木屋需要木材 10 + 石头 5');
     return false;
   }
   placeHouseAt(p);
-  logMsg('木屋建成，附近拓荒者缓慢回血');
+  sfx('build'); logMsg('木屋建成，附近拓荒者缓慢回血');
   return true;
 }
 

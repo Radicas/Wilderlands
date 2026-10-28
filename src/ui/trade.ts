@@ -3,6 +3,7 @@
  * 出售食物/木材/石头换金币（价格随当日成交量浮动），购买种子/木矛。所有资源买卖作用于 selected[0] 的背包。
  */
 import { CFG, ITEMS } from '../config';
+import { sfx } from '../core/sound';
 import type { Unit } from '../types';
 import { addGold, gold, logMsg, selected, trySpendGold } from '../state';
 import { invAdd, invCanAdd, invCount, invRemove } from '../systems/inventory';
@@ -61,6 +62,7 @@ function sellOne(id: SellId): void {
   }
   const price = recordSold(id);
   addGold(price);
+  sfx('coin');
   refresh();
   logMsg('出售' + ITEMS[id].label + ' +' + price + ' 金币（卖得越多价越低，天亮回升）');
 }

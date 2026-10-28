@@ -67,6 +67,8 @@ export interface ShipSave {
 /** 存档数据（当前版本 5：spec 011 性格+情绪；历史 v1–v4 由 migrate 逐级升级） */
 export interface SaveData {
   version: 5;
+  /** 静音态（sound-system D7：可选字段，缺省 false，SAVE_VERSION 不动） */
+  muted?: boolean;
   savedAt: string;
   gold: number;
   time: number;
@@ -157,6 +159,8 @@ export type TaskType = 'move' | 'walk' | 'gather' | 'attack' | 'trade';
 export interface UnitTask {
   type: TaskType;
   kind?: 'tree' | 'rock' | 'crop' | 'berry' | 'sow';
+  /** 挥击节拍步数（workT/单程三等分，sound-system 音效对齐用） */
+  hitStep?: number;
   target?: Tile | TreeEnt | RockEnt | BerryEnt | Unit;
   pos?: THREE.Vector3;
   workT: number;

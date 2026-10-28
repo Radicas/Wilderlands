@@ -4,6 +4,7 @@
  * 读档采用「写 pending → location.reload() → 启动时 applySave」流程（宪法 I 纯前端零后端）。
  */
 import * as THREE from 'three';
+import { isMuted, setBed, setMuted } from '../core/sound';
 import { CFG } from '../config';
 import type { SaveData } from '../types';
 import {
@@ -31,6 +32,7 @@ const KEY = (slot: string): string => 'wilderlands.save.' + slot;
 export function collectSave(): SaveData {
   return {
     version: SAVE_VERSION,
+    muted: isMuted(),
     savedAt: new Date().toISOString(),
     gold,
     time: timeOfDay.t,
@@ -63,8 +65,10 @@ export function collectSave(): SaveData {
 
 /** 启动时按存档初始化（世界/树/石/浆果已重新生成，这里只恢复玩家侧状态） */
 export function applySave(save: SaveData): void {
+  setMuted(save.muted ?? false);
   setGold(save.gold);
   timeOfDay.t = save.time;
+  setBed(timeOfDay.t >= CFG.nightStartRatio);
 
   // 建筑（纯放置，不扣资源）
   for (const b of save.buildings) {

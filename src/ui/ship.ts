@@ -4,6 +4,7 @@
  * 材料集齐 → 船翻正 + 狼船长登场 + 通关横幅（自由模式继续）。
  */
 import { CFG } from '../config';
+import { sfx } from '../core/sound';
 import type { Unit } from '../types';
 import { logMsg, selected } from '../state';
 import { invRemove } from '../systems/inventory';
@@ -70,7 +71,7 @@ function donate(id: 'wood' | 'stone'): void {
     return;
   }
   donateToShip(id, amount);
-  logMsg((id === 'wood' ? '木材' : '石头') + ' -' + amount + '，修船进度推进');
+  sfx('repair'); logMsg((id === 'wood' ? '木材' : '石头') + ' -' + amount + '，修船进度推进');
   if (shipReady(ship.wood, ship.stone)) {
     finishShipVisual();
     showVictory();

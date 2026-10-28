@@ -5,6 +5,7 @@
  */
 import * as THREE from 'three';
 import { CFG, TREES } from '../config';
+import { sfx } from '../core/sound';
 import type { BerryEnt, RockEnt, Tile, TreeEnt, Unit, WandererEnt } from '../types';
 import { buildings, gold, interMeshes, logMsg, merchantPos, modeNow, players, selected, selectableMeshes, trySpendGold } from '../state';
 import { tileAt } from '../core/world';
@@ -161,14 +162,14 @@ export function commandAt(ndc: THREE.Vector2): void {
         gold,
       });
       if (blockers.length) {
-        logMsg('想招人，还得再熬一熬：' + blockers.join('；'));
+        sfx('no'); logMsg('想招人，还得再熬一熬：' + blockers.join('；'));
         return;
       }
       if (!trySpendGold(CFG.recruitCost)) return; // 条件门已保证够钱，此处仅原子扣款兜底
       w.available = false;
       w.respawn = CFG.wandererRespawn;
       w.mesh.visible = false;
-      const nu = new PioneerUnit('player', w.p.x, w.p.z, w.name);
+      sfx('yes'); const nu = new PioneerUnit('player', w.p.x, w.p.z, w.name);
       // 新队员同样注册交易回调（走到商摊后自动开面板并锁定自己）
       nu.setTradeCallback((me) => openTrade(me));
       logMsg(w.name + ' 加入了你的小队！');
@@ -199,7 +200,7 @@ export function commandAt(ndc: THREE.Vector2): void {
     if (ent && ent.kind === 'tree' && ent.ent.alive) {
       const t = ent.ent as TreeEnt;
       if (t.phase !== 'mature') {
-        logMsg(TREES[t.species].name + (t.phase === 'sprout' ? '·幼苗' : '·小树') + '还太小，等它长成再砍吧');
+        sfx('ref'); logMsg(TREES[t.species].name + (t.phase === 'sprout' ? '·幼苗' : '·小树') + '还太小，等它长成再砍吧');
         return;
       }
       // 围绕树站位

@@ -5,6 +5,7 @@
  */
 import * as THREE from 'three';
 import { ANIM, CFG, TREE_STUMP, TREES, ITEMS, PALETTE, START_INV, START_PARTY, UNIT_NAMES } from '../config';
+import { sfx } from '../core/sound';
 import type { AnimState, BerryEnt, Inventory, LimbRefs, Personality, Mood, RockEnt, Tile, TreeEnt, Unit, UnitRole, UnitTask } from '../types';
 import { rollPersonality, findIdleWork, decideWolfReaction, speedMoodMultiplier, workMoodMultiplier, moodStep, MOOD_LOG, QUIPS_WORK, QUIPS_WOLF, QUIPS_NIGHT, QUIP_HUNGER, type IdleTarget, type WolfReaction } from '../systems/personality';
 import { buildings, gainFx, interMeshes, logMsg, merchantPos, players, rocks, berries, removeSelected, selected, selectableMeshes, timeOfDay, trees, wolves } from '../state';
@@ -373,6 +374,7 @@ export class PioneerUnit implements Unit {
     if (this.down) return;
     // 防御减伤只对攻击生效（max(1, dmg-defLv)）；饥饿等持续掉血走 pierce 原样扣
     const dmgIn = pierce ? dmg : incomingDamage(dmg, this);
+    if (!pierce && dmgIn > 0) sfx(this.role === 'wolf' ? 'thud' : attacker?.role === 'wolf' ? 'bite' : 'hurt');
     if (attacker?.role === 'wolf') gainAttrXp(this, 'defXp', 1);
     // spec 011：被狼咬 → 害怕（情绪变化才记日志，连咬不刷屏）
     if (attacker?.role === 'wolf' && this.role === 'player' && this.mood !== 'fear') {
@@ -384,6 +386,7 @@ export class PioneerUnit implements Unit {
     if (this.hp <= 0) {
       this.down = true;
       this.downT = 0;
+      sfx('down');
       // 倾倒改由 _downTilt 补间驱动（unit-animation：不再硬切）
       this.task = null;
       this.targetPos = null;
@@ -576,6 +579,13 @@ export class PioneerUnit implements Unit {
           // 饥饿 ≤20 → 采集变慢（×0.9）；情绪再叠一层
           t.workT += dt * (isHungerPenalty(this.hunger) ? CFG.hungerWorkSlow : 1) * workMoodMultiplier(this.mood);
           this._animState = 'gather';
+          // 挥击节拍：一程三等分跨步发音效（sound-system），同名节流兜底 turbo 密度
+          const step = (t.workDur ?? 2) / 3;
+          const hs = Math.floor(t.workT / step);
+          if (hs !== t.hitStep) {
+            t.hitStep = hs;
+            sfx(t.kind === 'tree' ? 'chop' : t.kind === 'rock' ? 'mine' : 'pick');
+          }
           if (t.workT >= (t.workDur ?? 2)) this._finishGather(t);
         }
       } else if (t.type === 'attack') {
@@ -760,7 +770,7 @@ export class PioneerUnit implements Unit {
       // 背包装不下就不砍，资源保留在原位
       const sp = TREES[tree.species];
       if (!invCanAdd(this, 'wood', sp.wood)) {
-        logMsg(this.name + ' 背包已满，放不下更多木材');
+        sfx('ref'); logMsg(this.name + ' 背包已满，放不下更多木材');
         this.task = null;
         return;
       }
@@ -772,7 +782,7 @@ export class PioneerUnit implements Unit {
       gainSkill(this, 'gather', 1);
       refreshCapacity(this); // 采集升级 → 负重立即 +4（修复：游戏中升级即时生效）
       logMsg('砍倒' + sp.name + '，木材 +' + sp.wood);
-      gainFx.push({ x: this.pos.x, y: 2.05, z: this.pos.z, text: '+' + sp.wood + ' 木材', color: '#d9b06a' });
+      sfx('pickup'); gainFx.push({ x: this.pos.x, y: 2.05, z: this.pos.z, text: '+' + sp.wood + ' 木材', color: '#d9b06a' });
       // 取消所有正在采这棵树的角色任务
       for (const u of [...players, ...wolves]) {
         if (u.task?.type === 'gather' && u.task.target === tree) {
@@ -782,7 +792,7 @@ export class PioneerUnit implements Unit {
     } else if (t.kind === 'rock') {
       const rock = t.target as RockEnt;
       if (!invCanAdd(this, 'stone', CFG.stonePerVein)) {
-        logMsg(this.name + ' 背包已满，放不下更多石头');
+        sfx('ref'); logMsg(this.name + ' 背包已满，放不下更多石头');
         this.task = null;
         return;
       }
@@ -791,7 +801,7 @@ export class PioneerUnit implements Unit {
       gainSkill(this, 'gather', 1);
       refreshCapacity(this);
       logMsg('开采矿石，石头 +' + CFG.stonePerVein);
-      gainFx.push({ x: this.pos.x, y: 2.05, z: this.pos.z, text: '+' + CFG.stonePerVein + ' 石头', color: '#b8b8c8' });
+      sfx('pickup'); gainFx.push({ x: this.pos.x, y: 2.05, z: this.pos.z, text: '+' + CFG.stonePerVein + ' 石头', color: '#b8b8c8' });
       if (rock.hp <= 0) {
         rock.alive = false;
         rock.respawn = 90;
@@ -813,7 +823,7 @@ export class PioneerUnit implements Unit {
       }
       const gain = CFG.cropPerHarvest + harvestBonus(this);
       if (!invCanAdd(this, 'food', gain)) {
-        logMsg(this.name + ' 背包已满，放不下更多食物');
+        sfx('ref'); logMsg(this.name + ' 背包已满，放不下更多食物');
         this.task = null;
         return;
       }
@@ -825,7 +835,7 @@ export class PioneerUnit implements Unit {
       tile.ear.visible = false;
       gainSkill(this, 'farm', 1);
       logMsg('收获作物，食物 +' + gain);
-      gainFx.push({ x: this.pos.x, y: 2.05, z: this.pos.z, text: '+' + gain + ' 食物', color: '#e8d06a' });
+      sfx('pickup'); gainFx.push({ x: this.pos.x, y: 2.05, z: this.pos.z, text: '+' + gain + ' 食物', color: '#e8d06a' });
     } else if (t.kind === 'sow') {
       const tile = t.target as Tile;
       // 走到田边后播种（plantTile 内部会校验 state=0 和种子）
@@ -833,7 +843,7 @@ export class PioneerUnit implements Unit {
     } else if (t.kind === 'berry') {
       const berry = t.target as BerryEnt;
       if (!invCanAdd(this, 'berry', CFG.berryFood)) {
-        logMsg(this.name + ' 背包已满，放不下更多浆果');
+        sfx('ref'); logMsg(this.name + ' 背包已满，放不下更多浆果');
         this.task = null;
         return;
       }

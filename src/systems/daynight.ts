@@ -4,6 +4,7 @@
  * 夜晚野狼更激进由 combat.ts 读取 state.timeOfDay.isNight 实现。
  */
 import * as THREE from 'three';
+import { setBed } from '../core/sound';
 import { CFG } from '../config';
 import { scene } from '../core/renderer';
 import { hemi, sun } from '../core/renderer';
@@ -22,8 +23,10 @@ const tmpCol = new THREE.Color();
 export function updateDayNight(dt: number): void {
   // t ∈ [0,1)，0 = 日出（太阳在东方地平线）
   const prevT = timeOfDay.t;
+  const prevNight = timeOfDay.isNight;
   timeOfDay.t = (timeOfDay.t + dt / CFG.daySeconds) % 1;
   timeOfDay.isNight = timeOfDay.t >= CFG.nightStartRatio;
+  if (timeOfDay.isNight !== prevNight) setBed(timeOfDay.isNight); // 声景翻转沿联动（D6）
   // 新的一天：商人成交压力衰减（隔日回升）
   if (timeOfDay.t < prevT) recoverTrade();
 
