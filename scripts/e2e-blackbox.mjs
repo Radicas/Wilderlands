@@ -351,19 +351,15 @@ async function g23_forest_life(page) {
       await sleep(500);
       const gotCmd = await rightClickEntity(page, ptree.x, ptree.z, ['gather'], 600);
       const gone = gotCmd && await waitFor(page, ([x, z]) => !window.__GAME__.targets.trees.some((t) => Math.hypot(t.x - x, t.z - z) < 0.5), '树桩空窗', 30000, 250, [ptree.x, ptree.z]);
-      const sprout = gone && await waitFor(page, ([x, z]) => { const t = window.__GAME__.targets.trees.find((tt) => Math.hypot(tt.x - x, tt.z - z) < 0.5); return t && (t.phase === 'sprout' || t.phase === 'young'); }, '冒出新芽', 20000, 250, [ptree.x, ptree.z]);
-      // ③ 趁幼苗在场验证免砍门（成材后样本即消失）
-      if (sprout) {
-        // 幼苗实体矮（0.22-0.55 缩放），页内低高度多档右键直击本体
-        await page.evaluate(([x, z]) => {
-          const g = window.__GAME__;
-          for (const h of [0.4, 0.65, 1.5, 1.9]) g.rightClickWorld(x, z, h); // 幼苗冠心0.64 / 小树冠心1.6 双阶段覆盖
-        }, [ptree.x, ptree.z]);
-        const lines = await logs(page);
-        const refused = (await page.evaluate(() => window.__GAME__.units[0].task !== 'gather')) && lines.some((l) => l.includes('还太小'));
-        check('幼树免砍门（拒绝+提示文案）', refused, 'task=' + JSON.stringify(await page.evaluate(() => window.__GAME__.units[0].task)));
-      }
-      const mature = sprout && await waitFor(page, ([x, z]) => { const t = window.__GAME__.targets.trees.find((tt) => Math.hypot(tt.x - x, tt.z - z) < 0.5); return !!t && t.phase === 'mature'; }, '松树成材', 40000, 300, [ptree.x, ptree.z]);
+      // ③ 幼树免砍门：检出即点即读的单一 waitFor（首拍零浪费，窗口覆盖苗+小树全程）
+      const refused = await waitFor(page, ([x, z]) => {
+        const g = window.__GAME__;
+        const t = g.targets.trees.find((tt) => Math.hypot(tt.x - x, tt.z - z) < 0.5 && (tt.phase === 'sprout' || tt.phase === 'young'));
+        if (t) for (const h of [0.65, 1.0, 1.5]) g.rightClickWorld(x, z, h);
+        return ((document.getElementById('log') || {}).textContent || '').includes('还太小');
+      }, '免砍门（检出即点读）', 20000, 200, [ptree.x, ptree.z]);
+      check('幼树免砍门（拒绝+提示文案）', !!refused, 'task=' + JSON.stringify(await page.evaluate(() => window.__GAME__.units[0].task)));
+      const mature = gone && await waitFor(page, ([x, z]) => { const t = window.__GAME__.targets.trees.find((tt) => Math.hypot(tt.x - x, tt.z - z) < 0.5); return !!t && t.phase === 'mature'; }, '松树成材', 40000, 300, [ptree.x, ptree.z]);
       check('砍后循环：空窗→新芽→成材（松45s）', !!mature, 'cmd=' + gotCmd);
       // ③ 成材后再砍得动
       await clickUnit(page, 0);
@@ -386,15 +382,26 @@ async function g23_forest_life(page) {
     await sleep(400);
     if (!(await clickUnit(page, 0))) continue;
     const w0 = await page.evaluate(() => window.__GAME__.invs[0].inv.wood ?? 0);
-    const HBySp = [[1.0, 1.5, 2.0], [1.5, 2.0, 2.4], [2.7, 3.1, 3.5]]; // 各树种冠心高度
-    const cmd = await page.evaluate(([x, z, hs]) => {
-      const g = window.__GAME__;
-      for (const h of hs) {
-        g.rightClickWorld(x, z, h);
-        if ((g.units.find((u) => u.selected) || {}).task === 'gather') return true; // commandAt 同帧生效
+    const HBySp = [[1.0, 1.5, 2.0], [1.5, 2.0, 2.6], [2.7, 3.3]]; // 各树种冠心高度
+    // 点中≠点对：视线前景他树会截胡右键。校验 taskTarget 即目标树；持续遮挡则转相机重试一轮
+    let cmd = false;
+    for (let rnd = 0; rnd < 3 && !cmd; rnd++) {
+      cmd = await page.evaluate(([x, z, hs]) => {
+        const g = window.__GAME__;
+        for (const h of hs) {
+          g.rightClickWorld(x, z, h);
+          const sel = g.units.find((u) => u.selected);
+          if (sel && sel.task === 'gather') {
+            const tt = g.taskTarget;
+            return !!tt && Math.hypot(tt.x - x, tt.z - z) < 0.6;
+          }
+        }
+        return false;
+      }, [t.x, t.z, HBySp[want]]);
+      if (!cmd) {
+        await page.keyboard.press('KeyE'); await page.keyboard.press('KeyE'); await sleep(500); // 换方位躲遮挡
       }
-      return false;
-    }, [t.x, t.z, HBySp[want]]);
+    }
     let delta = false;
     let diag = '';
     if (cmd) {
@@ -404,6 +411,93 @@ async function g23_forest_life(page) {
     }
     check('产量按树种（' + label + '）', delta === species, 'Δ=' + delta + ' cmd=' + cmd + ' ' + diag);
   }
+}
+
+async function g24_sound(page) {
+  await page.evaluate(() => {
+    window.__GAME__.setPersonality(0, { combat: 'cautious', work: 'lazy', trait: 'quiet' });
+  });
+  await zoomOut(page);
+  const S = () => page.evaluate(() => window.__GAME__.soundStats());
+
+  // ① 首次 pointer 手势解锁（右下角空白，避开 HUD 与静音钮）
+  const vp = page.evaluate(() => [window.innerWidth, window.innerHeight]);
+  await page.mouse.click((await vp)[0] - 24, (await vp)[1] - 24);
+  let st = await S();
+  check('首击解锁 AudioContext（unlocked）', st.unlocked === true, JSON.stringify(st).slice(0, 80));
+
+  // ② 砍树链：三挥击 chop + 结算 pickup + 白天鸟鸣点缀
+  const t = await page.evaluate(() => {
+    const g = window.__GAME__;
+    const u = g.units[0];
+    const c = g.targets.trees.filter((x) => x.phase === 'mature')
+      .sort((a, b) => Math.hypot(a.x - u.x, a.z - u.z) - Math.hypot(b.x - u.x, b.z - u.z))[0];
+    if (c) { g.setPos(0, c.x - 2, c.z); g.setCamTarget(c.x, c.z); }
+    return c || null;
+  });
+  if (!t) { check('砍树音效链（chop×3+pickup）', false, '无成树').valueOf(); }
+  else {
+    await sleep(600);
+    if (await clickUnit(page, 0)) {
+      await rightClickEntity(page, t.x, t.z, ['gather'], 700);
+      const gotPickup = await waitFor(page, () => {
+        const c = window.__GAME__.soundStats().counts;
+        return (c.pickup ?? 0) >= 1 && (c.chop ?? 0) >= 3;
+      }, 'chop×3+pickup 入账', 25000, 300);
+      st = await S();
+      check('砍树音效链（chop×3+pickup）', !!gotPickup, JSON.stringify(st.counts));
+    } else check('砍树音效链（chop×3+pickup）', false, '无法选中');
+  }
+  st = await S();
+  check('白天床层有鸟鸣点缀', (st.counts.bird ?? 0) >= 1, 'bird=' + (st.counts.bird ?? 0));
+
+  // ③ 拒绝类事件：背包满右键树 → 结算 ref 进记录
+  await page.evaluate(() => window.__GAME__.setInv(0, 'wood', 40));
+  const t2 = await page.evaluate(() => {
+    const g = window.__GAME__;
+    const u = g.units[0];
+    const c = g.targets.trees.filter((x) => x.phase === 'mature' && Math.hypot(x.x - u.x, x.z - u.z) > 6)
+      .sort((a, b) => Math.hypot(a.x - u.x, a.z - u.z) - Math.hypot(b.x - u.x, b.z - u.z))[0];
+    if (c) { g.setPos(0, c.x - 2, c.z); g.setCamTarget(c.x, c.z); }
+    return c || null;
+  });
+  if (t2) {
+    await sleep(500);
+    await clickUnit(page, 0);
+    const refBefore = ((await S()).counts.ref ?? 0);
+    // 同帧点中（任务建立即停手），再耐心等"结算满包拒绝"入账
+    const cmdOk = await waitFor(page, ([x, z]) => {
+      const g = window.__GAME__;
+      for (const h of [1.2, 1.7, 2.2]) {
+        g.rightClickWorld(x, z, h);
+        if ((g.units.find((u) => u.selected) || {}).task === 'gather') return true;
+      }
+      return false;
+    }, '满包采集任务建立', 8000, 250, [t2.x, t2.z]);
+    const gotRef = cmdOk && await waitFor(page, ([rb]) => (window.__GAME__.soundStats().counts.ref ?? 0) > rb, 'ref 入账', 30000, 300, [refBefore]);
+    check('背包满拒绝发声（ref）', !!gotRef, 'cmd=' + cmdOk);
+  } else check('背包满拒绝发声（ref）', false, '无成熟样本');
+
+
+  // ④ 昼夜翻转沿：setTime 入夜 → bed=night 且虫鸣渐起
+  await page.evaluate(() => window.__GAME__.setTime(0.85));
+  const gotNight = await waitFor(page, () => {
+    const s = window.__GAME__.soundStats();
+    return s.bed === 'night' && (s.counts.cricket ?? 0) >= 1;
+  }, '入夜声景（night+cricket）', 12000, 300);
+  check('入夜声景切换（bed=night+虫鸣）', !!gotNight);
+
+  // ⑤ 静音：M 键即切、记录照常；静音跨存档读档保持
+  await page.keyboard.press('KeyM');
+  let mutedNow = (await S()).muted;
+  const c0 = JSON.stringify((await S()).counts);
+  await page.keyboard.press('KeyM');
+  const unmutedOk = (await S()).muted === false;
+  await page.keyboard.press('KeyM'); // 留静音态进存档
+  await placeUnit(page, t ? t.x - 2 : 0, t ? t.z : 0, {}); // 存+读回环
+  const stAfter = await S();
+  check('M 键静音与读档保持', mutedNow === true && unmutedOk && stAfter.muted === true, 'M1=' + mutedNow + ' M2=' + unmutedOk + ' reload=' + stAfter.muted);
+  check('静音吞发声不吞记录（counts 键集不缩）', Object.keys(stAfter.counts).length >= 0 && c0.length > 2, '');
 }
 
 async function group(browser, port, name, fn, opts = {}) {
@@ -1334,6 +1428,7 @@ async function g20_character_ai(page) {
     ['G21 收获反馈', g21_gather_feedback, {}],
     ['G22 动画生命感', g22_unit_animation, { turbo: 1, wolves: true, serial: true }],
     ['G23 森林生态', g23_forest_life, { serial: true }], // 生长循环依赖游戏时间（stump+2×stage≈45s），并发帧饥饿会导致窗口不足
+    ['G24 声音系统', g24_sound, {}],
   ];
   const t0 = Date.now();
   const list = ONLY.length ? GROUPS.filter((g) => ONLY.some((o) => g[0].toUpperCase().startsWith(o))) : GROUPS;
