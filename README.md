@@ -109,7 +109,7 @@ src/
 ## 调试钩子
 
 - `window.__GAME_READY`：场景就绪标记（自动化自检用）。
-- `window.__GAME__`：只读运行状态（金币/人数/野狼数/浆果数/每人背包与负重/流浪者/时间）+ 测试夹具：`setPos`（传送）、`setInv`（改背包）、`setCamTarget`（移相机）、`addPlayer`（现场补队员，多选/转移场景用）、`setPersonality`（注入固定性格，角色 AI 断言用）、`noWolves`（清狼停刷）、`animState(i, role?)`（只读动画态：视觉朝向/倒地倾侧/手持工具，unit-animation 断言用）、`damage(i, n)`（施加伤害）、`freezeWolves(v)`（行为冻结狼群）、`rightClickWorld(x,z,h)`（页内同帧投影+右键派发，移动目标/低帧率场景防漂移）。
+- `window.__GAME__`：只读运行状态（金币/人数/野狼数/浆果数/每人背包与负重/流浪者/时间）+ 测试夹具：`setPos`（传送）、`setInv`（改背包）、`setCamTarget`（移相机）、`addPlayer`（现场补队员，多选/转移场景用）、`setPersonality`（注入固定性格，角色 AI 断言用）、`noWolves`（清狼停刷）、`animState(i, role?)`（只读动画态：视觉朝向/倒地倾侧/手持工具，unit-animation 断言用）、`damage(i, n)`（施加伤害）、`freezeWolves(v)`（行为冻结狼群）、`rightClickWorld(x,z,h)` / `leftClickWorld(x,z,h)`（页内同帧投影+点击派发，移动目标/低帧率场景防漂移）。
 - `?debug=1`：把运行时状态持续渲染进顶部提示框（金币 + 小队合计 + 每人背包负重 + 技能经验，开发自检用）。
 - `?turbo=N`（1-16）：**测试专用时间倍率**，每帧跑 N 个固定步长子步，只快进游戏逻辑、不加速相机/输入/渲染；玩家默认不带参数=1×，平衡与手感零影响。
 - `?nowolf=1`：**测试专用**清场野狼并停止刷怪（URL 级，跨 reload 持续生效），长流程自动化免遭狼群放倒队员/刷屏日志。
@@ -144,7 +144,7 @@ bash scripts/regress.sh
 | 层 | 脚本 | 说明 |
 | --- | --- | --- |
 | 冒烟 | `scripts/smoke.mjs` | 22 项：页面装载、canvas、HUD 骨架、六面板初始关闭、单人开局资源、零 console error |
-| 黑盒 | `scripts/e2e-blackbox.mjs` | 22 组 ≈127 项：点选/框选/移动/采集（树木·岩石）/背包满拒绝/交易/面板互斥/存档读档/导入导出/**招募条件门（拒绝+达成两段）**/播种建造/背包转移/Shift 多选/稳定性/修船通关/进食/战斗/调试钩子/**角色AI（闲时自治/发呆/当前行为文案/话痨吐槽）**/**收获反馈（飘字/消亡动画/状态条）**；headless Chromium 驱动真实页面，组间并发 |
+| 黑盒 | `scripts/e2e-blackbox.mjs` | 23 组 ≈136 项：点选/框选/移动/采集（树木·岩石）/背包满拒绝/交易/面板互斥/存档读档/导入导出/**招募条件门（拒绝+达成两段）**/播种建造/背包转移/Shift 多选/稳定性/修船通关/进食/战斗/调试钩子/**角色AI（闲时自治/发呆/当前行为文案/话痨吐槽）**/**收获反馈（飘字/消亡动画/状态条）**/**森林生态（三树种/疏林间距/砍后生长循环/幼树免砍/按树种产量）**；headless Chromium 驱动真实页面，组间并发 |
 | 白盒 | `scripts/{skills,price,ship,migrate}-check.mjs` | 迁移 22（含 v1→v5 链路与性格补齐）+ 技能 24 + 价格 17 + 修船 9 项数值/迁移单元断言 |
 | 集成 | `scripts/sim-run.mjs` | 16 组整局模拟 163 断言（seed=42；「16 · 角色AI」组性格显式注入，老组以中性性格基线隔离），剥离图形用 node 跑完整玩法；默认单人开局，多人场景显式 `world(42, 3)` |
 | 规格 lint | `openspec validate --all --strict` | 11 活规格 + 在途 change 的结构/场景完整性校验（MODIFIED 不得丢场景、Purpose 长度等），秒级 |
