@@ -23,4 +23,4 @@
 ## 4. 提交
 
 - [x] 4.1 数值调整独立提交（SCENE 几何 + 昼夜 600s/nightStartRatio 参数化 + sim-run 自适应断言——本批未提交，与功能分开）
-- [ ] 4.2 gather-feedback 实现提交 + 文档提交
+- [x] 4.2 gather-feedback 实现提交 + 文档提交
