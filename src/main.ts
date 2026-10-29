@@ -10,6 +10,7 @@ import { CFG } from './config';
 import { renderer, scene, camera, updateCamera, resize, updateCameraMove, cam } from './core/renderer';
 import { buildBerries, buildGround, buildMerchant, buildRocks, buildTrees, buildWanderer } from './core/world';
 import { buildShip, updateShip } from './entities/ship';
+import { initWildlife, wildlifeStats, wildlifeTick } from './systems/wildlife';
 import { createPlayers, PioneerUnit } from './entities/unit';
 import { berries, buildings, clearSavePending, getSavePending, gold, logMsg, merchantPos, players, rocks, selected, tiles, timeOfDay, trees, wanderer, wolves } from './state';
 import { invTotal } from './systems/inventory';
@@ -31,6 +32,7 @@ import { applySave, initAutoSave, readSlot } from './systems/save';
 // ===== 初始化世界 =====
 buildGround();
 buildTrees();
+initWildlife();
 buildRocks();
 buildBerries();
 buildMerchant();
@@ -110,6 +112,7 @@ function loop(): void {
   requestAnimationFrame(loop);
   const real = Math.min(clock.getDelta(), 0.05);
   soundTick(); // 床层点缀排程走真实时间（sound-system D6，自差分免疫 dt 钳制）
+  wildlifeTick(reducedMotion); // 动物群真实时间自差分（wildlife W1/D6 同款免疫 dt 钳制）
 
   updateCameraMove(keys, real);
   if (TURBO === 1) stepGame(real);
@@ -175,6 +178,9 @@ setBed(timeOfDay.isNight);
   },
   get berries() {
     return berries.length;
+  },
+  wildlifeStats(reset = false) {
+    return wildlifeStats(reset);
   },
   get invs() {
     return players.map((u) => ({ name: u.name, inv: { ...u.inv }, load: invTotal(u.inv) }));
