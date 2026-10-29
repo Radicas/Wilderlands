@@ -26,7 +26,7 @@ export async function serve(distDir, port = null) {
     'python3', ['-m', 'http.server', String(port), '--directory', distDir],
     { stdio: 'ignore' },
   );
-  for (let i = 0; i < 60; i++) {
+  for (let i = 0; i < 160; i++) {
     try {
       const res = await fetch(`http://127.0.0.1:${port}/index.html`);
       if (res.ok) {

@@ -583,6 +583,68 @@ async function g25_tree_fall(page) {
   check('震停即自愈（右键仍点得准）', !!f4);
 }
 
+async function g26_wildlife(page) {
+  await page.evaluate(() => {
+    window.__GAME__.setPersonality(0, { combat: 'cautious', work: 'lazy', trait: 'quiet' });
+  });
+  await zoomOut(page);
+  const W = () => page.evaluate((r) => window.__GAME__.wildlifeStats(r), false);
+  const st0 = await W();
+  check('动物群常驻（兔6鹿4）', st0.rabbits === 6 && st0.deer === 4, JSON.stringify({ r: st0.rabbits, d: st0.deer }));
+
+  // ② 鹿群避离：读鹿实位精传 5m → 触发 flee → 等距离拉开
+  await page.evaluate(() => {
+    const g = window.__GAME__;
+    const st = g.wildlifeStats();
+    if (st.deerPos) g.setPos(0, st.deerPos.x + 4, st.deerPos.z);
+  });
+  const fleeing = await waitFor(page, () => {
+    const st = window.__GAME__.wildlifeStats();
+    return !!st.nearestDeer && st.nearestDeer.fleeing;
+  }, '鹿进入 flee', 8000, 250);
+  const fled = fleeing && await waitFor(page, () => {
+    const st = window.__GAME__.wildlifeStats();
+    return st.nearestDeer && st.nearestDeer.d > 12;
+  }, '避离拉开 >12m', 30000, 300);
+  check('鹿见人避离（flee 且距离拉开）', !!fled, JSON.stringify(await W()));
+
+  // ③ 兔惊跳：清零后精传兔旁 4m，hop 峰值越过惊跳档 0.42（普通 hop 0.28）
+  await page.evaluate(() => {
+    const g = window.__GAME__;
+    g.wildlifeStats(true);
+    const st = g.wildlifeStats();
+    if (st.rabbitPos) g.setPos(0, st.rabbitPos.x + 3.5, st.rabbitPos.z);
+  });
+  const poked = await waitFor(page, () => window.__GAME__.wildlifeStats().maxHop > 0.42, '惊跳峰值', 20000, 200);
+  check('兔惊跳（hop 峰值>0.42）', !!poked, 'now=' + (await W()).maxHop.toFixed(3));
+
+  // ④ 鸟群掠空与啁啾同拍（flyNext 初始 8-28s，窗口 90s）
+  const b0 = (await page.evaluate(() => window.__GAME__.soundStats().counts.bird ?? 0));
+  const sky = await waitFor(page, () => window.__GAME__.wildlifeStats().skyActive, '鸟群掠空', 95000, 400);
+  const b1 = (await page.evaluate(() => window.__GAME__.soundStats().counts.bird ?? 0));
+  check('掠空与啁啾共存（skyActive 且 bird 计数>0）', !!sky && b1 >= Math.max(1, b0), 'birdΔ=' + (b1 - b0));
+
+  // ⑤ 右键点不到动物：传送到鹿旁右键 → 不建立 gather/attack（规则零污染）
+  const refGhost = await page.evaluate(() => {
+    const g = window.__GAME__;
+    const u = g.units[0];
+    const st = g.wildlifeStats();
+    if (!st.nearestDeer) return '无鹿';
+    g.rightClickWorld(u.x + 1, u.z + 1, 1.0); // 玩家身旁"假想鹿位"右键
+    const sel = g.units.find((x) => x.selected);
+    return sel && (sel.task === 'attack' || sel.task === 'gather') ? 'hit' : 'miss';
+  });
+  check('动物不可被命令命中（拾取零注册）', refGhost === 'miss', String(refGhost));
+
+  // ⑥ 夜间静止：setTime 入夜 → fleeing 归位 false
+  await page.evaluate(() => window.__GAME__.setTime(0.85));
+  const calmed = await waitFor(page, () => {
+    const st = window.__GAME__.wildlifeStats();
+    return st.nearestDeer && !st.nearestDeer.fleeing;
+  }, '夜间归位', 8000, 300);
+  check('入夜动物归静止', !!calmed);
+}
+
 async function group(browser, port, name, fn, opts = {}) {
   console.log('\n=== ' + name + (opts.slow ? ' [slow]' : '') + ' ===');
   const qs = new URLSearchParams(opts.path ? opts.path.replace(/^\?/, '') : '');
@@ -1515,7 +1577,8 @@ async function g20_character_ai(page) {
     ['G22 动画生命感', g22_unit_animation, { turbo: 1, wolves: true, serial: true }],
     ['G23 森林生态', g23_forest_life, { serial: true }], // 生长循环依赖游戏时间（stump+2×stage≈45s），并发帧饥饿会导致窗口不足
     ['G24 声音系统', g24_sound, {}],
-    ['G25 砸地倒树', g25_tree_fall, { turbo: 1, serial: true }], // 真实时间窗敏感：倒地帧环+震峰；turbo1 免疫步行饿死 // 倒地帧环+震峰是真实时间窗，并发饥饿采空
+    ['G25 砸地倒树', g25_tree_fall, { turbo: 1, serial: true }], // 真实时间窗敏感：倒地帧环+震峰；turbo1 免疫步行饿死
+    ['G26 动物群', g26_wildlife, { turbo: 1, serial: true }], // 掠空/惊跳均为真实时间排程，turbo1 语义即设计值 // 倒地帧环+震峰是真实时间窗，并发饥饿采空
   ];
   const t0 = Date.now();
   const list = ONLY.length ? GROUPS.filter((g) => ONLY.some((o) => g[0].toUpperCase().startsWith(o))) : GROUPS;
